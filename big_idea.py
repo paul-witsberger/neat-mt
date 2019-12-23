@@ -6,7 +6,6 @@
 from nnet import Neurocontroller
 import boost_tbp
 import time
-from copy import deepcopy
 import neatfast as neat
 from traj_config import *
 from orbit_util import *
@@ -204,7 +203,7 @@ def traj_fit_func(y, yf, y0, m_ratio):
     return f
 
 
-def integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu, mu, fu, Isp=2780, tol=1e-8,
+def integrate_func_missed_thrust(thrust_fcn, y0, time_interval, yf, m_dry, T_max_kN, du, tu, mu, fu, Isp=2780, tol=1e-8,
                                  save_full_traj=False):
     """
     Integrate a trajectory using boost_2bp with each leg having fixed thrust. Updates the thrust vector between each leg
@@ -230,6 +229,7 @@ def integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu
     # param = [gm, mdry, thrust_vec x3, ref power, min power, max power, thrust coef x5, isp coef x5]
 
     # Create placeholder matrix for trajectory
+    ti = time_interval.copy()
     y = np.zeros((len(ti), state_size))
 
     # Assign initial condition

@@ -1,6 +1,36 @@
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+from constants import au_to_km
+
+matplotlib.rcParams['font.sans-serif'] = "Times New Roman"
+matplotlib.rcParams['font.family'] = "serif"
+
+# Plot colors
+initial_color = 'grey'
+initial_point = 'g'
+initial_style = '-.'
+initial_weight = 1
+final_color = 'grey'
+final_point = 'blue'
+final_style = ':'
+final_weight = 1.5
+target_color = 'grey'
+target_point = 'm'
+target_style = '--'
+target_weight = 1
+transfer_color = 'k'
+transfer_style = '-'
+transfer_weight = 1.5
+missed_color = 'r'
+missed_style = '-'
+missed_weight = 1
+point_size = 15
+sun_size = 20
+sun_color = 'orange'
+plot_points = True
+
 
 def set_axes_radius(ax, origin, radius):
     ax.set_xlim3d([origin[0] - radius, origin[0] + radius])
@@ -36,7 +66,7 @@ def plotTraj3D(y):
     plt.show()
 
 def plotTraj2D(yout, show_plot=True, save_plot=False, fname='tmp_traj_plot', title='', fig_ax=None, label='',
-               start=False, end=False, show_legend=True, mt_ind=None):
+               start=False, end=False, show_legend=True, scale_distance=True):
     """
     Used for the transfer trajectory.
     :param yout:
@@ -51,21 +81,27 @@ def plotTraj2D(yout, show_plot=True, save_plot=False, fname='tmp_traj_plot', tit
     :return:
     """
     if fig_ax is None:
-        fig = plt.figure()
+        fig = plt.figure(figsize=(4, 4))
         ax = fig.add_subplot(111)
-        plt.grid(True)
+        plt.grid(False)
     else:
         fig, ax = fig_ax
-    ax.scatter(0, 0, c='k')
-    ax.plot(yout[:, 0], yout[:, 1], label=label, zorder = 4)
-    if start:
-        ax.scatter(yout[0, 0], yout[0, 1], c='g', label=label+' - Start')
-    if end:
-        ax.scatter(yout[-1,0], yout[-1,1], c='#ff7f0e', label=label+' - End')
-    if mt_ind is not None:
-        ax.scatter(yout[mt_ind, 0], yout[mt_ind, 1], c='m', s=10)
-    ax.set_xlabel('X [km]')
-    ax.set_ylabel('Y [km]')
+    if scale_distance:
+        yout_scaled = yout / au_to_km
+    else:
+        yout_scaled = yout.copy()
+    ax.scatter(0, 0, c=sun_color, s=sun_size)
+    ax.plot(yout_scaled[:, 0], yout_scaled[:, 1], label=label, zorder=6, c=transfer_color, linewidth=transfer_weight)
+    if start and plot_points:
+        ax.scatter(yout_scaled[0, 0], yout_scaled[0, 1], c=initial_point, label=label+' - Start', s=point_size)
+    if end and plot_points:
+        ax.scatter(yout_scaled[-1, 0], yout_scaled[-1, 1], c=final_point, label=label+' - End', s=point_size)
+    if scale_distance:
+        ax.set_xlabel('X [AU]')
+        ax.set_ylabel('Y [AU]')
+    else:
+        ax.set_xlabel('X [km]')
+        ax.set_ylabel('Y [km]')
     ax.set_title(title)
     ax.axis('equal')
     if show_legend:
@@ -77,7 +113,7 @@ def plotTraj2D(yout, show_plot=True, save_plot=False, fname='tmp_traj_plot', tit
     return fig, ax
 
 def plotTraj2DStruct(yout, show_plot=True, save_plot=False, fname='tmp_traj_plot', title='', fig_ax=None, label='',
-                     start=False, end=False, show_legend=True):
+                     start=False, end=False, show_legend=True, scale_distance=True):
     """
     Used for the initial and final orbits.
     :param yout:
@@ -92,30 +128,34 @@ def plotTraj2DStruct(yout, show_plot=True, save_plot=False, fname='tmp_traj_plot
     :return:
     """
     if fig_ax is None:
-        fig = plt.figure()
+        fig = plt.figure(figsize=(3, 3))
         ax = fig.add_subplot(111)
-        plt.grid(True)
+        plt.grid(False)
     else:
         fig, ax = fig_ax
-    ax.scatter(0, 0, c='k')
     if label == 'Final':
-        ax.plot(yout.y[0], yout.y[1], label=label, zorder=5, dashes=[4, 4])
+        ax.plot(yout.y[0] / au_to_km, yout.y[1] / au_to_km, label=label, zorder=5, c=final_color, linewidth=final_weight, linestyle=final_style)
+    elif label == 'Initial':
+        ax.plot(yout.y[0] / au_to_km, yout.y[1] / au_to_km, label=label, zorder=5, c=initial_color, linewidth=initial_weight, linestyle=initial_style)
+    else: # Target
+        ax.plot(yout.y[0] / au_to_km, yout.y[1] / au_to_km, label=label, zorder=5, c=target_color, linewidth=target_weight, linestyle=target_style)
+    if end and plot_points: # Target
+        ax.scatter(yout.y[0,-1] / au_to_km, yout.y[1,-1] / au_to_km, c=target_point, label=label, s=point_size)
+
+    if scale_distance:
+        ax.set_xlabel('X [AU]', fontname='Times New Roman')
+        ax.set_ylabel('Y [AU]', fontname='Times New Roman')
     else:
-        ax.plot(yout.y[0], yout.y[1], label=label, zorder=5, dashes=[4, 4])
-    if start:
-        ax.scatter(yout.y[0,0], yout.y[1,0], c='g', label=label)
-    if end:
-        ax.scatter(yout.y[0,-1], yout.y[1,-1], c='r', label=label)
-    ax.set_xlabel('X [km]')
-    ax.set_ylabel('Y [km]')
-    ax.set_title(title)
+        ax.set_xlabel('X [km]', fontname='Times New Roman')
+        ax.set_ylabel('Y [km]', fontname='Times New Roman')
+    ax.set_title(title, fontname='Times New Roman')
     ax.axis('equal')
     if show_legend:
         plt.legend()
     if show_plot:
         plt.show()
     if save_plot:
-        fig.savefig(fname, dpi=300)
+        fig.savefig(fname, dpi=600)
     return fig, ax
 
 def plotMassHistory(t, m, show_plot=False, save_plot=True, fname='tmp_mass_hist', mt_ind=None):

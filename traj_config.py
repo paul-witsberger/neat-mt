@@ -19,7 +19,7 @@ e0_max, e0_min = e_earth, e_earth
 i0_max, i0_min = 0, 0
 w0_max, w0_min = w_earth_rad, w_earth_rad
 om0_max, om0_min = 0, 0
-f0_max, f0_min = 2 * np.pi / 3, np.pi / 3
+f0_max, f0_min = 2 * np.pi / 3, 2 * np.pi / 3
 # Final orbit parameters
 af_max, af_min = a_mars_km, a_mars_km
 ef_max, ef_min = e_mars, e_mars
@@ -92,7 +92,7 @@ n_out = 2
 
 # Define integration parameters
 tol = 1e-7
-num_nodes = 50
+num_nodes = 150
 
 # Specify missed thrust cases
 num_cases = 5
@@ -111,9 +111,9 @@ max_energy = - u_sun_km3s2 / 2 / max(a0_max, af_max) * 0.8
 min_energy = - u_sun_km3s2 / 2 / min(a0_min, af_min) * 1.2
 
 # Choose whether missed thrust events occur or not, and scale time-between-events and recovery-duration
-missed_thrust_allowed = True
-missed_thrust_tbe_factor = 1
-missed_thrust_rd_factor = 1
+missed_thrust_allowed = False
+missed_thrust_tbe_factor = 0.1
+missed_thrust_rd_factor = 2
 
 # Specify the indices of the input array that should be used
 # input_indices = np.array([0, 1, 2, 3, 8, 9])

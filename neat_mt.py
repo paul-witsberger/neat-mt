@@ -40,7 +40,6 @@ def run():
     make_neat_network_diagram()
     make_last_traj(print_mass=True)
 
-
 if __name__ == '__main__':
     run()
 
