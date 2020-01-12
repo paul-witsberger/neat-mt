@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib
-import matplotlib.pyplot as plt
+matplotlib.use('Agg')
+from matplotlib import pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from constants import au_to_km
 
@@ -180,12 +181,12 @@ def plotThrustHistory(t, thrust_vec, T_max_kN, show_plot=False, save_plot=True, 
     thrust_mag = np.linalg.norm(thrust_vec, axis=1)
     throttle = thrust_mag / T_max_kN
     angle = np.rad2deg(np.arctan2(thrust_vec[:, 1], thrust_vec[:, 0]))
-    ax1.plot(t, throttle)
+    ax1.step(t, throttle, where='post')
     ax1.set_title('Throttle')
     ax1.set_xlabel('Time (day)')
     ax1.set_ylabel('Throttle')
     ax1.grid(True)
-    ax2.plot(t, angle)
+    ax2.step(t, angle, where='post')
     ax2.set_title('Thrust Angle')
     ax2.set_xlabel('Time (day)')
     ax2.set_ylabel('Angle (deg)')

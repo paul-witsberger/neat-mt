@@ -54,7 +54,7 @@ tf = 3 * year_to_sec
 
 # Define scales for the state vectors to non-dimensionalize later
 input_frame = 'kep'  # 'kep', 'mee', 'car'
-r_scale, v_scale = a_jupiter_km, vp_earth_kms
+r_scale, v_scale = a_earth_km, vp_earth_kms
 if input_frame == 'kep':
     if n_dim == 2:
         scales_in = np.array([r_scale, 1, np.pi, np.pi])
@@ -101,7 +101,7 @@ num_outages = 0
 # Choose to add a penalty for going too close to the central body in the fitness function
 rp_penalty = True
 min_allowed_rp = a_earth_km * 0.90
-rp_penalty_multiplier = 1000
+rp_penalty_multiplier = 5000
 
 # Choose to add a penalty for not thrusting at all (just staying in initial orbit)
 no_thrust_penalty = True
@@ -111,8 +111,8 @@ max_energy = - u_sun_km3s2 / 2 / max(a0_max, af_max) * 0.8
 min_energy = - u_sun_km3s2 / 2 / min(a0_min, af_min) * 1.2
 
 # Choose whether missed thrust events occur or not, and scale time-between-events and recovery-duration
-missed_thrust_allowed = False
-missed_thrust_tbe_factor = 0.1
+missed_thrust_allowed = True
+missed_thrust_tbe_factor = 0.5
 missed_thrust_rd_factor = 2
 
 # Specify the indices of the input array that should be used

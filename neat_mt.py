@@ -44,7 +44,7 @@ if __name__ == '__main__':
     run()
 
 # TODO figure out what weight and bias mutate rate, mutate power, etc mean
-# ...and then tailor values for this problem - I think there needs to be more "fine" updates of the weights/biases
+# ...and then tailor values for this problem - I think there need to be more "fine" updates of the weights/biases
 
 # TODO double check how the best fitness is saved - make sure the genome that had the best fitness ever is saved, not
 # just the genome with the most recent best fitness

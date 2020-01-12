@@ -61,12 +61,18 @@ def recreate_traj_from_pkl(fname, neat_net=False, print_mass=False, save_traj=Fa
     thrust_vec_body[miss_ind] = 0.
     thrust_vec_inertial = rotate_thrust(thrust_vec_body, y)
 
+    thrust_mag = np.sqrt(np.sum(np.square(thrust_vec_body), 1))
+    thrust_ind = np.argwhere(thrust_mag > 0).ravel()
+
     # Plot the transfer
     arrow_color = 'chocolate'
     missed_color = 'red'
+    thrust_color = 'green'
     fig, ax = plotTraj2D(full_traj[:, 1:-1], False, False, label='Transfer', start=True, end=True, show_legend=False)
     for mi in miss_ind:
-        ax.plot(full_traj[20*mi:20*mi+21, 1] / au_to_km, full_traj[20*mi:20*mi+21, 2] / au_to_km, c=missed_color, zorder=7)
+        ax.plot(full_traj[20*mi:20*mi+20, 1] / au_to_km, full_traj[20*mi:20*mi+20, 2] / au_to_km, c=missed_color, zorder=7)
+    for thi in thrust_ind:
+        ax.plot(full_traj[20*thi:20*thi+20, 1] / au_to_km, full_traj[20*thi:20*thi+20, 2] / au_to_km, c=thrust_color, zorder=7)
     fig, ax = plotTraj2DStruct(yfinal, False, False, fig_ax=(fig, ax), label='Final', show_legend=False)
     fig, ax = plotTraj2DStruct(yinit, False, False, fig_ax=(fig, ax), label='Initial', show_legend=False)
     q_scale = np.max(np.linalg.norm(thrust_vec_body, axis=1)) * 20
@@ -163,15 +169,11 @@ def load_traj(traj_fname='traj_data.hdf5'):
     return t, x, u
 
 
-def sensitivity(t, x, u):
+def sensitivity(t, x, m, u):
     '''
     Calculate sensitivity matrix
     :return:
     '''
-    # Reshape to a vector
-    m = x[:, -1].ravel().reshape((-1, 1))
-    x = np.hstack((x[:, :2], x[:, 3:5])).ravel()
-    u = u.ravel()
 
     # Number of rows = number of timesteps
     n = len(t)
@@ -182,11 +184,13 @@ def sensitivity(t, x, u):
     # for i in range(4*n):
     #     ddvdx[i] = get_ddvdx([x, m, u, i])
     # Parallel
-    with mp.Pool(os.cpu_count() - 1) as p:
+    with mp.Pool(os.cpu_count() - 3) as p:
         ddvdx = p.map_async(get_ddvdx, zip(repeat(x, 4*n), repeat(m, 4*n), repeat(u, 4*n), range(4*n))).get()
 
-    # Calculate L2 norm (Frobenius/matrix norm) of the matrix and return
-    sensitivity = np.sqrt(np.sum(np.square(ddvdx)))
+    # OLD - Calculate L2 norm (Frobenius/matrix norm) of the matrix and return
+    # Calculate the L2 norm of each state
+    sensitivity = np.sqrt(np.sum(np.square(ddvdx), 1)).reshape((-1, 1))
+    # print('Sensitivity = %f' % sensitivity)
     return sensitivity
 
 
@@ -233,6 +237,7 @@ def evaluate_perturbed_trajectory(x_perturbed, m, i):
     net = neat.nn.FeedForwardNetwork.create(genome, config)
     nc = Neurocontroller.init_from_neat_net(net, scales_in, scales_out)
     thrust_fcn = nc.get_thrust_vec_neat
+    del local_dir, config_path, config, fname, genome, net, nc
 
     # Propagate for number of steps
     y0, yf = x_perturbed[first_point*n_dim*2:(first_point+1)*n_dim*2], make_new_bcs()[-1]
@@ -262,47 +267,68 @@ def evaluate_perturbed_trajectory(x_perturbed, m, i):
     thrust_vec_body = get_thrust_history(ti, y_matrix, yf, m_dry, T_max_kN, thrust_fcn)[:, :n_dim]
     thrust_vec_body[miss_ind] = 0.
     thrust_vec_inertial = rotate_thrust(thrust_vec_body, y_matrix)
-    if not np.mod(i+1, 100):
-        print(i+1)
+    # if not np.mod(i+1, 100):
+    #     print(i+1)
     return thrust_vec_inertial.ravel()
+
+
+def save_traj(t, x, m, u, traj_fname='traj_data_desensitized.hdf5'):
+    x = np.reshape(x, (len(t), -1))
+    x = np.hstack((x, m))
+    with h5py.File(traj_fname, 'w') as f:
+        f.create_dataset('t', data=t)
+        f.create_dataset('x', data=x)
+        f.create_dataset('u', data=u)
 
 
 def desensitize():
     # Load trajectory
     t, x, u = load_traj()
 
+    # Reshape to vectors
+    m = x[:, -1].ravel().reshape((-1, 1))
+    x = np.hstack((x[:, :2], x[:, 3:5])).ravel()
+    u = u.ravel()
+
     # Calculate sensitivity of original trajectory
-    s = sensitivity(t, x, u)
-    print('Original sensitivity: %f' % s)
+    s = sensitivity(t, x, m, u)
+    np.save('traj_data_s.npy', s)
+    # print('Original sensitivity: %f' % s)
 
     # Calculate sensitivity of perturbed trajectories
-    dsdx = np.empty(len(x))
+    dsdx = np.empty((len(x), len(x))) # , n_dim*(len(t)-1)))
     for i in range(len(x)):
         x_step, v_step = 1, 0.001
         step = x_step if np.mod(i, 4) < 2 else v_step
         x_perturbed = x.copy()
         x_perturbed[i] += step
-        s_perturbed = sensitivity(t, x_perturbed, u)
-        dsdx[i] = (s_perturbed - s) / step
+        s_perturbed = sensitivity(t, x_perturbed, m, u)
+        dsdx[i] = ((s_perturbed - s) / step).T
+        print('Finished %i / %i' % (i + 1, len(x)))
+    np.save('traj_data_dsdx.npy', dsdx)
 
     # Calculate update to states
-    delta_x = s / dsdx
+    # delta_x = s / dsdx / len(x)
+    delta_x = np.matmul(np.linalg.inv(dsdx), s)
+    np.save('traj_data_delta_x.npy', delta_x)
 
     # Update states
     x += delta_x
+    np.save('traj_data_x.npy', x)
+
+    # Save new trajectory to file
+    save_traj(t, x, m, u)
 
     # Calculate new sensitivity
-    s = sensitivity(x, u ,t)
-    print('New sensitivity: %f' % s)
+    s = sensitivity(t, x, m, u)
+    # print('New sensitivity: %f' % s)
 
-    return x
-
-# TODO - there is a memory leak issue; after each sensitivity analysis runs, the memory use jumps up
+    return x, delta_x, dsdx
 
 # TODO - see if there could be a benefit from computing a step from minimizing delta v and minimizing s, and then add them together
 # TODO - look into effect of learning rate
 # TODO - see if the above two TODO's could be combined into one; use learning rate as a Pareto coefficient
 
-
+# TODO plot the magnitude of sensitivity for both position and velocity as a color along the trajectory
 if __name__ == '__main__':
     desensitize()

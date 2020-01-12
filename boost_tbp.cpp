@@ -184,9 +184,9 @@ public:
 		dxdt[0] = x[3];
 		dxdt[1] = x[4];
 		dxdt[2] = x[5];
-		dxdt[3] = -1 / r3 * x[0] + thrust_inertial[0] / x[6];
-		dxdt[4] = -1 / r3 * x[1] + thrust_inertial[1] / x[6];
-		dxdt[5] = -1 / r3 * x[2] + thrust_inertial[2] / x[6];
+		dxdt[3] = -1.0 / r3 * x[0] + thrust_inertial[0] / x[6];
+		dxdt[4] = -1.0 / r3 * x[1] + thrust_inertial[1] / x[6];
+		dxdt[5] = -1.0 / r3 * x[2] + thrust_inertial[2] / x[6];
 		dxdt[6] = -thrust_mag * 1000.0 / ve;
 		if (isnan(dxdt[6])) {
 			cout << "dmdt is nan" << endl;

@@ -9,6 +9,7 @@ import time
 import neatfast as neat
 from traj_config import *
 from orbit_util import *
+from copy import copy
 
 
 def eval_traj_neat(genome, config):
@@ -42,7 +43,7 @@ def eval_traj_neat(genome, config):
         y0, yf = make_new_bcs()
 
         # Integrate trajectory
-        y, miss_ind = integrate_func_missed_thrust(thrust_fcn, y0, deepcopy(ti), yf, m_dry, T_max_kN, du, tu, mu, fu,
+        y, miss_ind = integrate_func_missed_thrust(thrust_fcn, y0, copy(ti), yf, m_dry, T_max_kN, du, tu, mu, fu,
                                                    Isp, tol=tol)
         # Check if integration was stopped early
         if len(y.shape) == 0:
@@ -55,7 +56,6 @@ def eval_traj_neat(genome, config):
         # Calculate ratio of initial mass to final mass
         m_ratio = y0[-1] / y[-1, -1]
         f[i] = traj_fit_func(yf_actual, yf_target, y0, m_ratio)
-        blah = 0
 
     # Calculate scalar fitness
     if num_cases > 1:
@@ -171,18 +171,20 @@ def traj_fit_func(y, yf, y0, m_ratio):
     dw = np.abs(fix_angle(w2 - w1, np.pi, -np.pi) / np.pi)
     df = np.abs(fix_angle(f2 - f1, np.pi, -np.pi) / np.pi)
 
-    drp = 0 if drp < 0.001 else drp
-    dra = 0 if dra < 0.001 else dra
-    da = 0 if da < 0.001 else da
-    dw = 0 if dw < 0.005 else dw
-    df = 0 if df < 0.005 else df
+    K = 0
+    drp = 0 if drp < 0.01 else drp + K
+    dra = 0 if dra < 0.01 else dra + K
+    da = 0 if da < 0.01 else da + K
+    dw = 0 if dw < 0.01 else dw + K
+    df = 0 if df < 0.01 else df + K
 
     # Set cost function based on final trajectory type
     if elliptical_final:
         # Elliptic final
         weights = np.array([1, 1, 1, 0.5], np.float) * 20
-        f = np.sum(np.max((np.square(np.array([drp, dra, dw, df]) * weights),
-                           np.abs(   np.array([drp, dra, dw, df]) * weights)), axis=0)) + m_ratio * m_ratio
+        # f = np.sum(np.max((np.square(np.array([drp, dra, dw, df]) * weights),
+        #                    np.abs(   np.array([drp, dra, dw, df]) * weights)), axis=0)) + m_ratio * m_ratio
+        f = np.sum(np.square(np.array([drp, dra, dw, df]) * weights)) + m_ratio * m_ratio
     else:
         # Circular final
         weights = np.array([1, 1, 0, 0], np.float) * 20
@@ -194,6 +196,7 @@ def traj_fit_func(y, yf, y0, m_ratio):
         if rp1 < min_allowed_rp:
             f += rp_penalty_multiplier * (1 - rp1 / min_allowed_rp)
 
+    # Penalize for not leaving initial orbit
     if no_thrust_penalty:
         kepl_scales = [ra2 - ra0, rp2 - rp0]
         dy0 = np.sum(np.abs(np.array([ra1 - ra0, rp1 - rp0]) / kepl_scales))
@@ -248,8 +251,8 @@ def integrate_func_missed_thrust(thrust_fcn, y0, time_interval, yf, m_dry, T_max
     scales = np.array([du, du, du, du / tu, du / tu, du / tu, mu])
 
     # Set up timer
-    t_upper_lim = 1.
-    tstart = time.time()
+    # t_upper_lim = 1.
+    # tstart = time.time()
 
     # Main loop
     for i in range(len(ti)-1):
@@ -274,7 +277,7 @@ def integrate_func_missed_thrust(thrust_fcn, y0, time_interval, yf, m_dry, T_max
         if variable_power:
             param = [float(gm), float(m_dry / mu), float(thrust[0]), float(thrust[1]), float(thrust[2]), power_reference, power_min, power_max, float(thrust_power_coef[0]), float(thrust_power_coef[1]), float(thrust_power_coef[2]), float(thrust_power_coef[3]), float(thrust_power_coef[4]), float(isp_power_coef[0]), float(isp_power_coef[1]), float(isp_power_coef[2]), float(isp_power_coef[3]), float(isp_power_coef[4])]
         else:
-            param = [float(gm), float(Isp), float(m_dry / mu), float(thrust[0]), float(thrust[1]), float(thrust[2])]
+            param = [float(gm), float(Isp / du * tu), float(m_dry / mu), float(thrust[0]), float(thrust[1]), float(thrust[2])]
         # propagate from the current state until the next time step
         traj = tbp.prop(list(y[i] / scales), [ti[i], ti[i+1]], param, state_size, time_size, param_size, tol, step_size, int(variable_power))
         # save full trajectory
@@ -301,13 +304,14 @@ def calculate_missed_thrust_events(ti):
     :param ti:
     :return:
     """
-    #TODO see what happens when the duration of missed thrust events is shortened versus lengthed
 
     # Define Weibull distribution parameters
     lambda_tbe = 0.62394 * missed_thrust_tbe_factor
     k_tbe = 0.86737
     lambda_rd = 2.459 * missed_thrust_rd_factor
     k_rd = 1.144
+    max_discovery_delay_days = 3
+    op_recovery_days = 0.5
     # initialize list of indices that experience missed thrust
     miss_indices = list()
     t = 0.
@@ -317,7 +321,8 @@ def calculate_missed_thrust_events(ti):
         if t < ti[-1]:  # check if the next event happens before the end of the time of flight
             # while True:
                 recovery_duration = np.random.weibull(k_rd) * lambda_rd * day_to_sec  # calculate the recovery duration
-                recovery_duration += (np.random.rand() * 3 * day_to_sec) + (0.5 * day_to_sec)  # account for discovery delay and operational recovery
+                recovery_duration += (np.random.rand() * max_discovery_delay_days * day_to_sec) + \
+                                     (op_recovery_days * day_to_sec)  # account for discovery delay and operational recovery
                 miss_indices.append(np.arange(find_nearest(ti, t), find_nearest(ti, t + recovery_duration)))
                 t += recovery_duration
         if t >= ti[-1]:
@@ -325,9 +330,6 @@ def calculate_missed_thrust_events(ti):
                 return np.hstack(miss_indices).astype(int)
             else:
                 return np.array([]).astype(int)
-
-    # cdf(p) = 1 - exp(-(x / lam)**k)
-    # x = lam * nthroot(-ln(1-p), k)
 
 
 def find_nearest(array, value):
