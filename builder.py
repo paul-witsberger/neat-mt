@@ -61,6 +61,7 @@ def recreate_traj_from_pkl(fname, neat_net=False, print_mass=False, save_traj=Fa
     thrust_vec_body[miss_ind] = 0.
     thrust_vec_inertial = rotate_thrust(thrust_vec_body, y)
 
+    # Get indices where thrust occurs (for plotting)
     thrust_mag = np.sqrt(np.sum(np.square(thrust_vec_body), 1))
     thrust_ind = np.argwhere(thrust_mag > 0).ravel()
 
@@ -69,10 +70,10 @@ def recreate_traj_from_pkl(fname, neat_net=False, print_mass=False, save_traj=Fa
     missed_color = 'red'
     thrust_color = 'green'
     fig, ax = plotTraj2D(full_traj[:, 1:-1], False, False, label='Transfer', start=True, end=True, show_legend=False)
-    for mi in miss_ind:
-        ax.plot(full_traj[20*mi:20*mi+20, 1] / au_to_km, full_traj[20*mi:20*mi+20, 2] / au_to_km, c=missed_color, zorder=7)
-    for thi in thrust_ind:
-        ax.plot(full_traj[20*thi:20*thi+20, 1] / au_to_km, full_traj[20*thi:20*thi+20, 2] / au_to_km, c=thrust_color, zorder=7)
+    # for mi in miss_ind:
+    #     ax.plot(full_traj[20*mi:20*mi+20, 1] / au_to_km, full_traj[20*mi:20*mi+20, 2] / au_to_km, c=missed_color, zorder=7)
+    # for thi in thrust_ind:
+    #     ax.plot(full_traj[20*thi:20*thi+20, 1] / au_to_km, full_traj[20*thi:20*thi+20, 2] / au_to_km, c=thrust_color, zorder=7)
     fig, ax = plotTraj2DStruct(yfinal, False, False, fig_ax=(fig, ax), label='Final', show_legend=False)
     fig, ax = plotTraj2DStruct(yinit, False, False, fig_ax=(fig, ax), label='Initial', show_legend=False)
     q_scale = np.max(np.linalg.norm(thrust_vec_body, axis=1)) * 20
@@ -102,7 +103,7 @@ def recreate_traj_from_pkl(fname, neat_net=False, print_mass=False, save_traj=Fa
     # Print results
     if print_mass:
         print('Final mass = {0:.3f} kg'.format(y[-1, -1]))
-    print('Final fitness = %f' % -traj_fit_func(y[-1, ind_dim], yf[ind_dim[:-1]], y0, y0[-1] / y[-1, -1]))
+    print('Final fitness = %f' % -traj_fit_func(y[-2, ind_dim], yf[ind_dim[:-1]], y0, (y[-1, -1] - y0[-1]) / y0[-1]))
 
 
 def make_last_traj(print_mass=False, save_traj=True):
@@ -325,6 +326,7 @@ def desensitize():
 
     return x, delta_x, dsdx
 
+# REGARDING SENSITIVITY:
 # TODO - see if there could be a benefit from computing a step from minimizing delta v and minimizing s, and then add them together
 # TODO - look into effect of learning rate
 # TODO - see if the above two TODO's could be combined into one; use learning rate as a Pareto coefficient

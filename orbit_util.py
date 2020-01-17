@@ -375,6 +375,48 @@ def fix_angle(angle, upper_bound=np.pi, lower_bound=-np.pi):
             return angle
 
 
+def min_energy_lambert(r0, r1, gm=gm):
+    # Get magnitude of position vectors
+    r0mag = np.linalg.norm(r0)
+    r1mag = np.linalg.norm(r1)
+
+    # Get properties of transfer angle
+    cos_dnu = np.dot(r0, r1) / r0mag / r1mag
+    sin_dnu = np.linalg.norm(np.cross(r0, r1)) / r0mag / r1mag
+
+    # Calculate p of minimum energy transfer
+    pmin = r0mag * r1mag / np.sqrt(r0mag ** 2 + r1mag ** 2 - 2 * np.dot(r0, r1)) * (1 - cos_dnu)
+
+    # Calculate necessary velocity at initial position
+    v0min = np.sqrt(gm * pmin) / r0mag / r1mag / sin_dnu * (r1 - r0 * (1 - r1mag / pmin * (1 - cos_dnu)))
+    v0minmag = np.linalg.norm(v0min)
+
+    # Get other properties of transfer
+    amin = -(gm / 2) / (v0minmag ** 2 / 2 - gm / r0mag)
+    emin = np.sqrt(1 - pmin / amin)
+    assert emin < 1
+    n = np.sqrt(gm / amin ** 3)
+
+    # Calculate velocity at second position
+    v1minmag = np.sqrt(2 * gm / r1mag - gm / amin)
+    hmin = np.cross(r0, v0min)
+    hminmag = np.linalg.norm(hmin)
+    v1minunit = np.cross(hmin, r1) / hminmag / r1mag
+    v1min = v1minunit * v1minmag
+
+    # Calculate true and eccentric anomaly
+    nu0 = np.arccos((pmin / r0mag - 1) / emin)
+    nu1 = np.arccos((pmin / r1mag - 1) / emin)
+    E0 = 2 * np.arctan(np.sqrt((1 - emin) / (1 + emin)) * np.tan(nu0 / 2))
+    E1 = 2 * np.arctan(np.sqrt((1 - emin) / (1 + emin)) * np.tan(nu1 / 2))
+
+    # Calculate time of flight
+    t0 = (E0 - emin * np.sin(E0)) / n
+    t1 = (E1 - emin * np.sin(E1)) / n
+    tof = t1 - t0
+
+    return v0min, v1min, tof
+
 if __name__ == "__main__":
     state_k = np.array([150e6, 0.5, 2, 2, 2, 2])
     state_m = keplerian_to_mee_3d(state_k)

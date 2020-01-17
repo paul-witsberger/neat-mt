@@ -26,7 +26,7 @@ ef_max, ef_min = e_mars, e_mars
 if_max, if_min = 0, 0
 wf_max, wf_min = w_mars_rad, w_mars_rad
 omf_max, omf_min = 0, 0
-ff_max, ff_min = 0, 0
+ff_max, ff_min = np.pi / 2, np.pi / 2
 # Flag that specifies if orbit is elliptical or circular
 elliptical_initial = True if e0_max > 0 else False
 elliptical_final = True if ef_max > 0 else False
@@ -47,10 +47,11 @@ if variable_power:
 else:
     T_max_kN = 1.2 * 1e-3 # 2 x HERMeS engines with 37.5 kW  # 21.8 mg/s for one thruster
     Isp = 2780
+Isp_chemical = 370 # for the final correction burns
 
 # Define time of flight
 t0 = 0.
-tf = 3 * year_to_sec
+tf = 2 * year_to_sec
 
 # Define scales for the state vectors to non-dimensionalize later
 input_frame = 'kep'  # 'kep', 'mee', 'car'
@@ -92,10 +93,10 @@ n_out = 2
 
 # Define integration parameters
 tol = 1e-7
-num_nodes = 150
+num_nodes = 50
 
 # Specify missed thrust cases
-num_cases = 5
+num_cases = 1
 num_outages = 0
 
 # Choose to add a penalty for going too close to the central body in the fitness function
@@ -111,7 +112,7 @@ max_energy = - u_sun_km3s2 / 2 / max(a0_max, af_max) * 0.8
 min_energy = - u_sun_km3s2 / 2 / min(a0_min, af_min) * 1.2
 
 # Choose whether missed thrust events occur or not, and scale time-between-events and recovery-duration
-missed_thrust_allowed = True
+missed_thrust_allowed = False
 missed_thrust_tbe_factor = 0.5
 missed_thrust_rd_factor = 2
 

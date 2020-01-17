@@ -197,6 +197,87 @@ public:
 	}
 };
 
+class eom2BPScaled_stm {
+	double a;
+
+public:
+	eom2BPScaled_stm(std::vector<double> param) {
+		a = param[0];
+	}
+
+	void operator()(const state_type &x, state_type &dxdt, const double /* t */) {
+		double r, r3, r5, A[6][6], A21[3][3], stm[6][6], dstmdt[6][6];
+		int counter;
+
+		// calculate radius
+		r = sqrt((x[0] * x[0]) + (x[1] * x[1]) + (x[2] * x[2]));
+		r3 = r * r * r;
+		r5 = r3 * r * r;
+
+		// EOMs (3 velocity, 3 accel w/ grav and thrust)
+		double xx, yy, zz, vx, vy, vz;
+		xx = x[0]; yy = x[1]; zz = x[2]; vx = x[3]; vy = x[4]; vz = x[5];
+		dxdt[0] = vx;
+		dxdt[1] = vy;
+		dxdt[2] = vz;
+		dxdt[3] = -1.0 / r3 * xx;
+		dxdt[4] = -1.0 / r3 * yy;
+		dxdt[5] = -1.0 / r3 * zz;
+
+		// State Transition Matrix
+		counter = 6;
+		for (int i = 0; i < 6; i++) {
+			for (int j = 0; j < 6; j++) {
+				stm[i][j] = x[counter];
+			}
+		}
+		A21[0][0] = -1.0 / r3 + 3 * xx * xx / r5;
+		A21[0][1] = 3 * xx * yy / r5;
+		A21[0][2] = 3 * xx * zz / r5;
+		A21[1][0] = 3 * yy * xx / r5;
+		A21[1][1] = -1.0 / r3 + 3 * yy * yy / r5;
+		A21[1][2] = 3 * yy * zz / r5;
+		A21[2][0] = 3 * zz * xx / r5;
+		A21[2][1] = 3 * zz * yy / r5;
+		A21[2][2] = -1.0 / r3 + 3 * zz * zz / r5;
+		for (int i = 0; i < 6; i++) {
+			for (int j = 0; j < 6; j++) {
+				A[i][j] = 0.0;
+			}
+		}
+		for (int i = 3; i < 6; i++) {
+			for (int j = 0; j < 3; j++) {
+				A[i][j] = A21[i-3][j];
+			}
+		}
+		A[0][3] = 1.0;
+		A[1][4] = 1.0;
+		A[2][5] = 1.0;
+
+		for (int i = 0; i < 6; i++) {
+			for (int j = 0; j < 6; j++) {
+				dstmdt[i][j] = 0.0;
+			}
+		}
+
+		for (int i = 0; i < 6; i++) {
+			for (int j = 0; j < 6; j++) {
+				for (int k = 0; k < 6; k++) {
+					dstmdt[i][j] = A[i][j] * stm[k][j];
+				}
+			}
+		}
+
+		counter = 6;
+		for (int i = 0; i < 6; i++) {
+			for (int j = 0; j < 6; j++) {
+				dxdt[counter] = dstmdt[i][j];
+				counter += 1;
+			}
+		}
+	}
+};
+
 class myexception : public exception {
 	virtual const char* what() const throw()
 	{
@@ -234,7 +315,7 @@ struct getStateAndTime {
 struct TBP {
 	// Put function into format python can understand and the propagate
 	boost::python::list propPy(boost::python::list &ic, boost::python::list &ti, boost::python::list &p,
-								int state_dim, int t_dim, int p_dim, double tol, double step_size, int power_type) {
+								int state_dim, int t_dim, int p_dim, double tol, double step_size, int integrator_type, int eom_type) {
 
 		typedef std::vector<double> state_type;
 		std::vector<state_type> statesAndTimes;
@@ -257,7 +338,7 @@ struct TBP {
 		}
 
 		// Propagate
-		statesAndTimes = prop(IC, t, param, state_dim, t_dim, p_dim, tol, step_size, power_type);
+		statesAndTimes = prop(IC, t, param, state_dim, t_dim, p_dim, tol, step_size, integrator_type, eom_type);
 
 		// Create python list from data to return
 		return toTwoDimPythonList(statesAndTimes);
@@ -265,7 +346,7 @@ struct TBP {
 
 	// Propagation function
 	std::vector<vector<double >> prop(vector<double> ic, vector<double> t, vector<double> param, int state_dim, int t_dim,
-										int p_dim, double tol, double step_size, int power_type) {
+										int p_dim, double tol, double step_size, int integrator_type, int eom_type) {
 		using namespace std;
 		using namespace boost::numeric::odeint;
 
@@ -286,14 +367,32 @@ struct TBP {
 		auto stepper = make_controlled<rk78>(absTol, relTol);
 		
 		// Create eom to integrate
-		if (power_type == 0) {
+		if (eom_type == 0) {
 			eom2BPScaled_constant_power eom(param);
-			size_t steps = integrate_const(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
-		} else if (power_type == 1) {
+			if (integrator_type == 0) {
+				size_t steps = integrate_const(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
+			}
+			else if (integrator_type == 1) {
+				size_t steps = integrate_adaptive(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
+			}
+		} else if (eom_type == 1) {
 			eom2BPScaled_variable_power eom(param);
-			size_t steps = integrate_const(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
+			if (integrator_type == 0) {
+				size_t steps = integrate_const(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
+			}
+			else if (integrator_type == 1) {
+				size_t steps = integrate_adaptive(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
+			}
 		}
-		//size_t steps = integrate_adaptive(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));		
+		else if (eom_type == 2) {
+			eom2BPScaled_stm eom(param);
+			if (integrator_type == 0) {
+				size_t steps = integrate_const(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
+			}
+			else if (integrator_type == 1) {
+				size_t steps = integrate_adaptive(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
+			}
+		}
 
 		// Insert IC into list of state vectors
 		statesAndTimes.resize(statesOut.size());

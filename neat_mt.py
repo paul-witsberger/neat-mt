@@ -43,13 +43,5 @@ def run():
 if __name__ == '__main__':
     run()
 
-# TODO figure out what weight and bias mutate rate, mutate power, etc mean
-# ...and then tailor values for this problem - I think there need to be more "fine" updates of the weights/biases
-
-# TODO double check how the best fitness is saved - make sure the genome that had the best fitness ever is saved, not
-# just the genome with the most recent best fitness
-
-# TODO experiment with changing the probability of adding nodes/connections to be slightly higher than removing them
-
 # NOTE: changed bias initial std to 0.0 from 1.0, weight initial std to 0.1 from 1.0, bias and weight max/min values to
 #       5/-5 from 10/-10
