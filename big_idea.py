@@ -36,6 +36,7 @@ def eval_traj_neat(genome, config):
     # Define times
     # ti = np.power(np.linspace(0, 1, num_nodes), 3 / 2) * (tf - t0) + t0
     ti = np.linspace(t0, tf, num_nodes)
+    ti = np.append(ti, ti[-1])
     ti /= tu
 
     # Initialize score vector
@@ -45,11 +46,12 @@ def eval_traj_neat(genome, config):
         y0, yf = make_new_bcs()
 
         # Integrate trajectory
-        y, miss_ind, full_traj = integrate_func_missed_thrust(thrust_fcn, y0, copy(ti), yf, m_dry, T_max_kN, du, tu, mu, fu,
+        y, miss_ind, full_traj, dv1, dv2 = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu, mu, fu,
                                                               Isp, tol=tol)
         # Check if integration was stopped early
         if len(y.shape) == 0:
-            return y * 50 - 2000
+            f[i] = 10000
+            continue
         # Create logical list for indices of 2D components
         # ind_2d = [True, True, False, True, True, False, False]
         # Get final state
@@ -58,7 +60,8 @@ def eval_traj_neat(genome, config):
         # Calculate ratio of initial mass to final mass
         # TODO fix mass ratio calculation
         m_ratio = (y0[-1] - y[-1, -1]) / y0[-1]
-        f[i] = traj_fit_func(yf_actual, yf_target, y0, m_ratio)
+        t_ratio = ti[-1] / ti[-2]
+        f[i] = traj_fit_func(yf_actual, yf_target, y0, m_ratio, t_ratio)
 
     # Calculate scalar fitness
     if num_cases > 1:
@@ -145,7 +148,7 @@ def evalTraj(W, params):
     return f
 
 
-def traj_fit_func(y, yf, y0, m_ratio):
+def traj_fit_func(y, yf, y0, m_ratio, t_ratio=0.):
     """
     Calculates a scalar fitness value for a trajectory based on weighted sum of final state error plus the final mass.
     :param y:
@@ -185,10 +188,11 @@ def traj_fit_func(y, yf, y0, m_ratio):
     # Set cost function based on final trajectory type
     if elliptical_final:
         # Elliptic final
-        weights = np.array([1, 1, 1, 0.5], np.float) * 20
+        weights = np.array([1, 1, 1, 0.5], np.float) * 10
+        m_ratio *= 5
         # f = np.sum(np.max((np.square(np.array([drp, dra, dw, df]) * weights),
         #                    np.abs(   np.array([drp, dra, dw, df]) * weights)), axis=0)) + m_ratio * m_ratio
-        f = np.sum(np.square(np.array([drp, dra, dw, df]) * weights)) + m_ratio * m_ratio
+        f = np.sum(np.square(np.array([drp, dra, dw, df]) * weights)) + m_ratio + t_ratio - 1
     else:
         # Circular final
         weights = np.array([1, 1, 0, 0], np.float) * 20
@@ -210,24 +214,10 @@ def traj_fit_func(y, yf, y0, m_ratio):
     return f
 
 
-def integrate_func_missed_thrust(thrust_fcn, y0, time_interval, yf, m_dry, T_max_kN, du, tu, mu, fu, Isp, tol=1e-8,
+def integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu, mu, fu, Isp, tol=1e-8,
                                  save_full_traj=False):
     """
     Integrate a trajectory using boost_2bp with each leg having fixed thrust. Updates the thrust vector between each leg
-    :param thrust_fcn:
-    :param y0:
-    :param ti:
-    :param yf:
-    :param m_dry:
-    :param T_max_kN:
-    :param du:
-    :param tu:
-    :param mu:
-    :param fu:
-    :param Isp:
-    :param tol:
-    :param save_full_traj:
-    :return:
     """
 
     # Define lengths of vectors for C++
@@ -236,7 +226,6 @@ def integrate_func_missed_thrust(thrust_fcn, y0, time_interval, yf, m_dry, T_max
     # param = [gm, mdry, thrust_vec x3, ref power, min power, max power, thrust coef x5, isp coef x5]
 
     # Create placeholder matrix for trajectory
-    ti = time_interval.copy()
     y = np.zeros((len(ti), state_size))
 
     # Assign initial condition
@@ -255,25 +244,19 @@ def integrate_func_missed_thrust(thrust_fcn, y0, time_interval, yf, m_dry, T_max
     # Scales for nondim integration
     scales = np.array([du, du, du, du / tu, du / tu, du / tu, mu])
 
-    # Set up timer
-    # t_upper_lim = 1.
-    # tstart = time.time()
-
     # Main loop
-    integrator_type = 1 # adaptive
-    eom_type = 0 # constant power
-    for i in range(len(ti)-1):
-        # if (time.time()-tstart > t_upper_lim) and not save_full_traj:
-        #     return np.array(1 - i / len(ti)), 0
+    integrator_type = 0 # 0 fixed step, 1 adaptive step
+    eom_type = 0 # 0 constant power, 1 variable power, 2 state transition matrix
+    for i in range(len(ti) - 2):
         r = np.linalg.norm(y[i, :3])
         eps = (np.linalg.norm(y[i, 3:6])**2 / 2 - gm / r)
         if (eps > max_energy or eps < min_energy) and not save_full_traj:
-            return y[:i, :], miss_ind, 0
+            return np.array(0), 0, 0, 0, 0
         # Fixed step integrator step size
         step_size = (ti[i+1] - ti[i]) / 20
         # ratio of dry to wet mass for NN
         mass_ratio = m_dry / y[i, -1]
-        time_ratio = ti[i] / ti[-1]
+        time_ratio = ti[i] / ti[-2]
         # Check if i is supposed to miss thrust for this segment
         if i in miss_ind or y[i, -1] <= m_dry + 0.01:
             thrust = np.array([0, 0, 0])
@@ -282,204 +265,66 @@ def integrate_func_missed_thrust(thrust_fcn, y0, time_interval, yf, m_dry, T_max
             thrust = thrust_fcn(np.hstack((y[i, ind_dim], yf[ind_dim[:-1]], mass_ratio, time_ratio))) * T_max_kN / fu
         # create list of parameters to pass to integrator
         if variable_power:
-            param = [float(gm), float(m_dry / mu), float(thrust[0]), float(thrust[1]), float(thrust[2]), power_reference, power_min, power_max, float(thrust_power_coef[0]), float(thrust_power_coef[1]), float(thrust_power_coef[2]), float(thrust_power_coef[3]), float(thrust_power_coef[4]), float(isp_power_coef[0]), float(isp_power_coef[1]), float(isp_power_coef[2]), float(isp_power_coef[3]), float(isp_power_coef[4])]
+            param = [float(gm), float(m_dry / mu), float(thrust[0]), float(thrust[1]), float(thrust[2]), power_reference,
+                     power_min, power_max, float(thrust_power_coef[0]), float(thrust_power_coef[1]), float(thrust_power_coef[2]),
+                     float(thrust_power_coef[3]), float(thrust_power_coef[4]), float(isp_power_coef[0]), float(isp_power_coef[1]),
+                     float(isp_power_coef[2]), float(isp_power_coef[3]), float(isp_power_coef[4])]
         else:
             param = [float(gm), float(Isp / du * tu), float(m_dry / mu), float(thrust[0]), float(thrust[1]), float(thrust[2])]
         # propagate from the current state until the next time step
-        traj = tbp.prop(list(y[i] / scales), [ti[i], ti[i+1]], param, state_size, time_size, param_size, tol, step_size, int(integrator_type), int(eom_type))
+        traj = tbp.prop(list(y[i] / scales), [ti[i], ti[i+1]], param, state_size, time_size, param_size, tol, step_size,
+                        int(integrator_type), int(eom_type))
         # save full trajectory
-        if save_full_traj:
-            if i == 0:
-                full_traj = traj
-            else:
-                full_traj.extend(traj[1:])
+        if i == 0:
+            full_traj = traj
+        else:
+            full_traj.extend(traj[1:])
         # save final state of current leg
         y[i+1] = np.array(traj[-1])[1:] * scales
 
-    # Compute the last leg to reach the target using a single-shooting method (using low-thrust)
-    # if missed_thrust_allowed:
-    #     switch_mte = True
-    #     missed_thrust_allowed = False
-    # else:
-    #     switch_mte = False
-    # thrust_guess = thrust.copy()
-    # pos_tol = 0.1
-    # count = 1
-    # while True:
-    #     # Integrate the nominal (unperturbed) case
-    #     param0 = [float(gm), float(Isp / du * tu), float(m_dry / mu), float(thrust_guess[0]), float(thrust_guess[1]),
-    #               float(thrust_guess[2])]
-    #     traj0 = tbp.prop(list(y[-2] / scales), [ti[-2], ti[-1]], param0, state_size, time_size, param_size, tol,
-    #                      step_size, int(variable_power))
-    #     dpos0 = np.array(traj0[-1])[1:4] - yf[:3] / scales[:3]
-    #     # Print position error
-    #     print(dpos0[:2])
-    #     print(np.linalg.norm(dpos0))
-    #     # Check convergence
-    #     if np.linalg.norm(dpos0) < pos_tol:
-    #         print('Shooting method converged in %i iterations.' % count)
-    #         traj = traj0
-    #         break
-    #     else:
-    #         if count > 5:
-    #             print('Shooting method did not converge.')
-    #             traj = traj0
-    #             break
-    #
-    #         # Add perturbations to the thrust vector
-    #         perturb_x = np.array([0.01, 0, 0])
-    #         perturb_y = np.array([0, 0.01, 0])
-    #         thrust_perturb_x = thrust_guess + perturb_x
-    #         thrust_perturb_y = thrust_guess + perturb_y
-    #
-    #         # Propagate both perturbations
-    #         param1 = [float(gm), float(Isp / du * tu), float(m_dry / mu), float(thrust_perturb_x[0]), float(thrust_perturb_x[1]), float(thrust_perturb_x[2])]
-    #         param2 = [float(gm), float(Isp / du * tu), float(m_dry / mu), float(thrust_perturb_y[0]), float(thrust_perturb_y[1]), float(thrust_perturb_y[2])]
-    #         traj1 = tbp.prop(list(y[-2] / scales), [ti[-2], ti[-1]], param1, state_size, time_size, param_size, tol, step_size, int(variable_power))
-    #         traj2 = tbp.prop(list(y[-2] / scales), [ti[-2], ti[-1]], param2, state_size, time_size, param_size, tol, step_size, int(variable_power))
-    #
-    #         # Calculate derivative of position error with respect to delta V
-    #         dpos1 = np.array(traj1[-1])[1:4] - np.array(traj0[-1])[1:4]
-    #         dpos2 = np.array(traj2[-1])[1:4] - np.array(traj0[-1])[1:4]
-    #         dposddv = np.vstack((dpos1 / perturb_x[0], dpos2 / perturb_y[1], np.zeros((1, 3), float))).T
-    #         ddvdpos = np.linalg.inv(dposddv[:2, :2])
-    #         ddv = np.matmul(ddvdpos, -dpos0[:2])
-    #         ddv = np.hstack((ddv, 0.))
-    #         thrust_guess += (ddv * 0.1)
-    #         print(ddv * 0.1)
-    #         print(thrust_guess)
-    #     count += 1
-    #     print('')
-    #
-    # if switch_mte:
-    #     missed_thrust_allowed = True
+    # Compute a minimum-energy Lambert arc to the target point
 
-    # save full trajectory
-    # if save_full_traj:
-    #     # full_traj[-20:] = traj[1:]
-    #     full_traj.extend(traj[1:])
-    # # save final state of current leg
-    # y[-1] = np.array(traj[-1])[1:] * scales
+    final_tol = 0.05 # nondimensional position
+    if np.linalg.norm((y[-2, :3] - yf[:3]) / scales[:3]) > final_tol:
+        v1, v2, tof = min_energy_lambert(y[-2, :3], yf[:3])
+        dv1 = v1 - y[-2, 3:6]
+        dv2 = yf[3:6] - v2
+        dv1_mag = np.linalg.norm(dv1)
+        dv2_mag = np.linalg.norm(dv2)
+        ti[-1] = ti[-2] + tof / tu
+        m_penultimate = y[-2, -1] / np.exp(dv1_mag * 1000 / g0_ms2 / Isp_chemical) / mu
+        m_final = m_penultimate / np.exp(dv2_mag * 1000 / g0_ms2 / Isp_chemical)
 
-    pass
-    # Use single shooting to figure out the first impulse
-    # TODO figure out how to make this process less janky - extend the time of transfer to the final point, check how
-    #  close it is to the target orbit and target point, etc
-    count, min_count, max_count = 1, 0, 10
-    pos_tol, time_tol = 1e-5, 1e-5
-    integrator_type = 1  # adaptive
-    eom_type = 2  # stm
-    state_size = 6 + 36
-    param, param_size = [0], 1
-    y_last = np.array(traj[-1])[1:-1]
-    y_last = np.append(y_last, np.eye(6).ravel())
-    vf_0 = y_last[3:6].copy()
-    m_last = traj[-1][-1]
-    do_print = True
-    dv = 0.
-    dt_low, dt_high = -0.02, 0.02
-    tspan = ti[-1] - ti[-2]
-    inc = tspan / 2
-    if do_print:
-        print('Velocity at final node:')
-        print(vf_0)
-        print()
-    while True:
-        # Iteration cap
-        if count > max_count:
-            print('Did not converge')
-            return np.array(-1000), 0, 0
-        traj = tbp.prop(list(y_last), [ti[-1], ti[-1] + tspan], param, state_size, time_size, param_size,
+        # y[-2, -1] = m_penultimate # TODO add an integrator that only does six orbital elements - then mass can be zero
+        integrator_type = 0  # constant
+        eom_type = 0  # constant
+        state_size = len(y[-2])
+        step_size = (ti[-1] - ti[-2]) / 20
+        param = [float(gm), float(Isp / du * tu), float(m_dry / mu), float(0), float(0), float(0)]
+        traj = tbp.prop(list(y[-2] / scales), [ti[-2], ti[-1]], param, state_size, time_size, param_size,
                         tol, step_size, int(integrator_type), int(eom_type))
-        y_final = np.array(traj[-1])[1:-1]
-        dr = y_final[:3] - yf[:3] / scales[:3]
-        dr_mag = np.linalg.norm(dr)
-        if do_print:
-            print('Position error: %5e' % dr_mag)
-        # Check for convergence
-        if dr_mag < pos_tol and count > min_count:
-            print('Position error within tolerance')
-            # Construct state transition matrix
-            phi = np.array(traj[-1])[7:].reshape((6, 6))
-            phi_inv = np.linalg.inv(phi)
-            # Compute TOF update
-            ddvdt = np.matmul(np.linalg.inv(phi_inv[:3, 3:]), y_last[3:6])
-            dt = np.matmul(1 / ddvdt[:2], -dv[:2])
-            # Keep dt within bounds
-            dt = min(max(dt, dt_low), dt_high)
-            # tspan += dt
-            inc *= 0.5
-            if np.sign(dt) < 0:
-                tspan *= inc
-            else:
-                tspan /= inc
-            if do_print:
-                print('Time update:')
-                print(dt)
-                print('Updated time span:')
-                print(tspan)
-            if np.abs(dt) < time_tol:
-                dv = y_last[3:6] - vf_0
-                if do_print:
-                    print('Converged on iteration %i' % count)
-                    print('Delta V 1 (nondimensional):')
-                    print(dv)
-                    print('Delta V 1 magnitude (km/s):')
-                    print(np.linalg.norm(dv * scales[3:6]))
-                # Calculate propellant mass required for first maneuver
-                m_after_first = m_last / np.exp(np.linalg.norm(dv * scales[3:6] * 1000) / g0_ms2 / Isp_chemical)
-                # Now calculate second maneuver, to put spacecraft is correct target orbit
-                dv2 = yf[3:6] - y_final[3:6] * scales[3:6]
-                m_final = m_after_first / np.exp(np.linalg.norm(dv2 * scales[3:6] * 1000) / g0_ms2 / Isp_chemical)
-                y_final[3:6] += dv2 / scales[3:6]
-                traj[-1][4:7] = [i for i in y_final[3:6]]
-                # dm = np.abs(m_last - m_final)
-                if do_print:
-                    print('Delta V 2 (nondimensional):')
-                    print(dv2)
-                    print('Delta V 2 magnitude (km/s):')
-                    print(np.linalg.norm(dv2 * scales[3:6]))
-                converged = True
-                break
-        # Construct state transition matrix
-        phi = np.array(traj[-1])[7:].reshape((6, 6))
-        # phi_inv = (phi)
-        # Compute velocity update
-        v_update = np.matmul(np.linalg.inv(phi[:3, 3:]), -dr)
-        dv += v_update
-        y_last[3:6] += v_update
-        # Print values
-        if do_print:
-            print('Velocity update:')
-            print(v_update)
-            print('Updated velocity:')
-            print(y_last[3:6])
-            print('Delta V:')
-            print(dv)
-            print('Delta V magnitude:')
-            print(np.linalg.norm(dv))
-            print()
-        count += 1
 
-    if converged:
         # Add last leg to the trajectory
-        if save_full_traj:
-            last_leg = np.array([i[:7] for i in traj[1:]])
-            last_leg = np.hstack((last_leg, m_final * np.ones((last_leg.shape[0], 1))))
-            full_traj = np.vstack((full_traj, last_leg))
+        last_leg = np.array(traj[1:])
+        full_traj = np.vstack((full_traj, last_leg))
+        full_traj[-1, -1] = m_final
+
         # save final state of current leg
         y[-1] = np.hstack((traj[-1][1:7], m_final)) * scales
-    else:
-        if save_full_traj:
-            full_traj = np.array(full_traj)
 
-    # return trajectory matrix
-    if save_full_traj:
-        # full_traj = np.array(full_traj)
-        full_traj[:, 1:] = full_traj[:, 1:] * scales
-        return y, miss_ind, full_traj
     else:
-        return y, miss_ind, 0
+        dv1, dv2 = np.zeros(3, float), np.zeros(3, float)
+        y[-1] = y[-2]
+        ti[-1] = ti[-2]
+        full_traj = np.array(full_traj)
+        # m_penultimate, m_final = y[-2, -1], y[-2, -1]
+        # print()
+        # print('else statement')
+        # print()
+
+    # rescale states
+    full_traj[:, 1:] = full_traj[:, 1:] * scales
+    return y, miss_ind, full_traj, dv1, dv2
 
 
 def calculate_missed_thrust_events(ti):

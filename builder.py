@@ -43,6 +43,7 @@ def recreate_traj_from_pkl(fname, neat_net=False, print_mass=False, save_traj=Fa
     # Integrate transfer, final, and target trajectories
     # ti = np.power(np.linspace(0, 1, num_nodes), 3 / 2) * (tf - t0) + t0
     ti = np.linspace(t0, tf, num_nodes)
+    ti = np.append(ti, ti[-1])
     ti /= tu
 
     # Integrate each of the trajectories
@@ -50,8 +51,8 @@ def recreate_traj_from_pkl(fname, neat_net=False, print_mass=False, save_traj=Fa
     yinit_tf = period_from_inertial(y0[:-1], gm=gm)
     ytarg_tf = period_from_inertial(yf, gm=gm)
     yinit = integrate.solve_ivp(eom2BP, [t0, yinit_tf], y0[ind_dim], rtol=tol_analytic)
-    y, miss_ind, full_traj = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu, mu, fu, Isp,
-                                                          tol=tol, save_full_traj=True)
+    y, miss_ind, full_traj, dv1, dv2 = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu, mu,
+                                                                    fu, Isp, tol=tol, save_full_traj=True)
     yfinal_tf = period_from_inertial(y[-1, :-1], gm=gm)
     yfinal = integrate.solve_ivp(eom2BP, [t0, yfinal_tf], y[-1, ind_dim], rtol=tol_analytic)
     ytarg = integrate.solve_ivp(eom2BP, [t0, ytarg_tf], yf[ind_dim[:-1]], rtol=tol_analytic)
@@ -60,6 +61,7 @@ def recreate_traj_from_pkl(fname, neat_net=False, print_mass=False, save_traj=Fa
     thrust_vec_body = get_thrust_history(ti, y, yf, m_dry, T_max_kN, thrust_fcn)[:, :n_dim]
     thrust_vec_body[miss_ind] = 0.
     thrust_vec_inertial = rotate_thrust(thrust_vec_body, y)
+    thrust_vec_inertial = np.vstack((thrust_vec_inertial, dv1[:n_dim] / du * tu, dv2[:n_dim] / du * tu))
 
     # Get indices where thrust occurs (for plotting)
     thrust_mag = np.sqrt(np.sum(np.square(thrust_vec_body), 1))
@@ -84,14 +86,15 @@ def recreate_traj_from_pkl(fname, neat_net=False, print_mass=False, save_traj=Fa
     #           headaxislength=5, headlength=6, headwidth=5, color=arrow_color)
 
     # Arrows without heads
-    ax.quiver(y[:-1, 0] / au_to_km, y[:-1, 1] / au_to_km, thrust_vec_inertial[:, 0], thrust_vec_inertial[:, 1],
+    ax.quiver(y[:, 0] / au_to_km, y[:, 1] / au_to_km, thrust_vec_inertial[:, 0], thrust_vec_inertial[:, 1],
               angles='xy', zorder=8, width=0.004, units='width', scale=q_scale, scale_units='width', minlength=0.1,
               headaxislength=0, headlength=0, headwidth=0, color=arrow_color)
     plotTraj2DStruct(ytarg, False, True, fig_ax=(fig,ax), label='Target', end=True, show_legend=False)
 
     # Plot mass and thrust
     plotMassHistory(ti * tu * sec_to_day, y[:, -1], mt_ind=miss_ind)
-    plotThrustHistory(ti[:-1] * tu * sec_to_day, thrust_vec_body, T_max_kN, mt_ind=miss_ind)
+    plotThrustHistory(ti * tu * sec_to_day, np.vstack((thrust_vec_body, rotate_thrust(np.vstack((dv1[:n_dim],
+                      dv2[:n_dim])), -y[-2:]))), T_max_kN, mt_ind=miss_ind)
 
     # Save trajectory to file (states, times, controls)
     if save_traj:
@@ -103,7 +106,7 @@ def recreate_traj_from_pkl(fname, neat_net=False, print_mass=False, save_traj=Fa
     # Print results
     if print_mass:
         print('Final mass = {0:.3f} kg'.format(y[-1, -1]))
-    print('Final fitness = %f' % -traj_fit_func(y[-2, ind_dim], yf[ind_dim[:-1]], y0, (y[-1, -1] - y0[-1]) / y0[-1]))
+    print('Final fitness = %f' % -traj_fit_func(y[-2, ind_dim], yf[ind_dim[:-1]], y0, (y0[-1] - y[-1, -1]) / y0[-1], ti[-1] / ti[-2]))
 
 
 def make_last_traj(print_mass=False, save_traj=True):
@@ -117,8 +120,8 @@ def make_last_traj(print_mass=False, save_traj=True):
 
 def get_thrust_history(ti, y, yf, m_dry, T_max_kN, thrust_fcn):
     # Calculate thrust vector at each time step
-    thrust_vec = np.zeros((len(ti) - 1, 3))
-    for i in range(len(ti) - 1):
+    thrust_vec = np.zeros((len(ti) - 2, 3))
+    for i in range(len(ti) - 2):
         if y[i, -1] > m_dry + 0.01:
             mass_ratio = m_dry / y[i, -1]
             time_ratio = ti[i] / ti[-1]

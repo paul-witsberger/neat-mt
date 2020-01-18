@@ -383,6 +383,7 @@ def min_energy_lambert(r0, r1, gm=gm):
     # Get properties of transfer angle
     cos_dnu = np.dot(r0, r1) / r0mag / r1mag
     sin_dnu = np.linalg.norm(np.cross(r0, r1)) / r0mag / r1mag
+    # TODO check that transfer is positively oriented (e.g. always counter-clockwise)
 
     # Calculate p of minimum energy transfer
     pmin = r0mag * r1mag / np.sqrt(r0mag ** 2 + r1mag ** 2 - 2 * np.dot(r0, r1)) * (1 - cos_dnu)
@@ -394,11 +395,10 @@ def min_energy_lambert(r0, r1, gm=gm):
     # Get other properties of transfer
     amin = -(gm / 2) / (v0minmag ** 2 / 2 - gm / r0mag)
     emin = np.sqrt(1 - pmin / amin)
-    assert emin < 1
     n = np.sqrt(gm / amin ** 3)
 
     # Calculate velocity at second position
-    v1minmag = np.sqrt(2 * gm / r1mag - gm / amin)
+    v1minmag = np.sqrt(max(2 * gm / r1mag - gm / amin, 0))
     hmin = np.cross(r0, v0min)
     hminmag = np.linalg.norm(hmin)
     v1minunit = np.cross(hmin, r1) / hminmag / r1mag
@@ -406,14 +406,21 @@ def min_energy_lambert(r0, r1, gm=gm):
 
     # Calculate true and eccentric anomaly
     nu0 = np.arccos((pmin / r0mag - 1) / emin)
-    nu1 = np.arccos((pmin / r1mag - 1) / emin)
+    arg1 = (pmin / r1mag - 1) / emin
+    arg1 = min(max(-1, arg1), 1)
+    # print('Lambert failed.')
+    nu1 = np.arccos(arg1)
     E0 = 2 * np.arctan(np.sqrt((1 - emin) / (1 + emin)) * np.tan(nu0 / 2))
     E1 = 2 * np.arctan(np.sqrt((1 - emin) / (1 + emin)) * np.tan(nu1 / 2))
+    E1 = E1 + 2 * np.pi if E1 < E0 else E1
 
     # Calculate time of flight
     t0 = (E0 - emin * np.sin(E0)) / n
     t1 = (E1 - emin * np.sin(E1)) / n
     tof = t1 - t0
+
+    if np.any(np.hstack((np.isnan(v0min), np.isnan(v1min), np.isnan(tof)))):
+        print('Lambert failed.')
 
     return v0min, v1min, tof
 
