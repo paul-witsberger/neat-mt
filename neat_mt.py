@@ -4,7 +4,7 @@ import os
 import pickle
 
 import neatfast as neat
-# import visualize
+from neatfast import visualize
 from big_idea import eval_traj_neat
 from builder import make_last_traj, make_neat_network_diagram
 
@@ -24,8 +24,10 @@ def run():
     pop.add_reporter(neat.StdOutReporter(True))
 
     # Run
-    pe = neat.ParallelEvaluator(os.cpu_count() - 1, eval_traj_neat)
-    max_generations = 1000
+    num_workers = os.cpu_count() - 1
+    # num_workers = 1  # for debugging purposes
+    pe = neat.ParallelEvaluator(num_workers, eval_traj_neat)
+    max_generations = 100
     winner = pop.run(pe.evaluate, n=max_generations)
 
     # Save the winner.
@@ -35,13 +37,11 @@ def run():
     print(winner)
 
     # Make plots
-    neat.visualize.plot_stats(stats, ylog=True, filename="feedforward-fitness.svg")
-    neat.visualize.plot_species(stats, filename="feedforward-speciation.svg")
+    visualize.plot_stats(stats, ylog=True, filename="tmp_fitness_history.svg")
+    visualize.plot_species(stats, filename="tmp_speciation_history.svg")
     make_neat_network_diagram()
     make_last_traj(print_mass=True)
 
+
 if __name__ == '__main__':
     run()
-
-# NOTE: changed bias initial std to 0.0 from 1.0, weight initial std to 0.1 from 1.0, bias and weight max/min values to
-#       5/-5 from 10/-10

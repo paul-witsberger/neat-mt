@@ -27,36 +27,25 @@ using namespace boost::python;
 typedef std::vector<double> state_type;
 
 // 2BP Equations of Motion
-class eom2BP {
-	double gm, ve, mdry;
-	std::vector<double> thrust;
+class eom2BPScaled {
 
 public:
-	eom2BP(std::vector<double> param){
-		gm = param[0];
-		ve = param[1];
-		mdry = param[2];
-		thrust.assign({ param[3], param[4] , param[5] });
+	eom2BPScaled(std::vector<double> param){
+		
 	}
 
 	void operator()(const state_type &x, state_type &dxdt, const double /* t */) {
 		// calculate auxiliary variables
 		double r = sqrt((x[0] * x[0]) + (x[1] * x[1]) + (x[2] * x[2]));
 		double r3 = r * r * r;
-		double tmag = sqrt((thrust[0] * thrust[0]) + (thrust[1] * thrust[1]) + (thrust[2] * thrust[2]));
-		// check if mass has dropped below minimum allowable value
-		if (x[6] <= mdry) {
-			thrust.assign({ 0.0, 0.0, 0.0 });
-			tmag = 0.0;
-		}
-		// EOMs (3 velocity, 3 accel w/ grav and thrust, 1 mass)
+		
+		// EOMs (3 velocity, 3 accel w/ gravity only)
 		dxdt[0] = x[3];
 		dxdt[1] = x[4];
 		dxdt[2] = x[5];
-		dxdt[3] = -gm / r3 * x[0] + thrust[0] / x[6];
-		dxdt[4] = -gm / r3 * x[1] + thrust[1] / x[6];
-		dxdt[5] = -gm / r3 * x[2] + thrust[2] / x[6];
-		dxdt[6] = -tmag * 1000.0 / ve;
+		dxdt[3] = -1 / r3 * x[0];
+		dxdt[4] = -1 / r3 * x[1];
+		dxdt[5] = -1 / r3 * x[2];
 	}
 };
 
@@ -67,14 +56,13 @@ class eom2BPScaled_variable_power {
 public:
 	eom2BPScaled_variable_power(std::vector<double> param) {
 		g0 = 9.80665;
-		gm = param[0];
-		mdry = param[1];
-		thrust_body.assign({ param[2], param[3] , param[4] });
-		power_reference = param[5];
-		power_min = param[6];
-		power_max = param[7];
-		thrust_coef.assign({ param[8], param[9], param[10], param[11], param[12] });
-		isp_coef.assign({ param[13], param[14], param[15], param[16], param[17] });
+		mdry = param[0];
+		thrust_body.assign({ param[1], param[2] , param[3] });
+		power_reference = param[4];
+		power_min = param[5];
+		power_max = param[6];
+		thrust_coef.assign({ param[7], param[8], param[9], param[10], param[11] });
+		isp_coef.assign({ param[12], param[13], param[14], param[15], param[16] });
 	}
 
 	double thrust_fcn(double power) {
@@ -151,11 +139,9 @@ class eom2BPScaled_constant_power {
 
 public:
 	eom2BPScaled_constant_power(std::vector<double> param) {
-		double g0 = 9.80665;
-		gm = param[0];
-		ve = param[1] * g0;
-		mdry = param[2];
-		thrust_body.assign({ param[3], param[4] , param[5] });
+		ve = param[0];
+		mdry = param[1];
+		thrust_body.assign({ param[2], param[3] , param[4] });
 		thrust_mag = sqrt((thrust_body[0] * thrust_body[0]) + (thrust_body[1] * thrust_body[1]) + (thrust_body[2] * thrust_body[2]));
 	}
 
@@ -198,11 +184,10 @@ public:
 };
 
 class eom2BPScaled_stm {
-	double a;
 
 public:
 	eom2BPScaled_stm(std::vector<double> param) {
-		a = param[0];
+		
 	}
 
 	void operator()(const state_type &x, state_type &dxdt, const double /* t */) {
@@ -314,8 +299,8 @@ struct getStateAndTime {
 
 struct TBP {
 	// Put function into format python can understand and the propagate
-	boost::python::list propPy(boost::python::list &ic, boost::python::list &ti, boost::python::list &p,
-								int state_dim, int t_dim, int p_dim, double tol, double step_size, int integrator_type, int eom_type) {
+	boost::python::list propPy(boost::python::list &ic, boost::python::list &ti, boost::python::list &p, int state_dim, int t_dim,
+							   int p_dim, double rtol, double atol, double step_size, int integrator_type, int eom_type) {
 
 		typedef std::vector<double> state_type;
 		std::vector<state_type> statesAndTimes;
@@ -338,7 +323,7 @@ struct TBP {
 		}
 
 		// Propagate
-		statesAndTimes = prop(IC, t, param, state_dim, t_dim, p_dim, tol, step_size, integrator_type, eom_type);
+		statesAndTimes = prop(IC, t, param, state_dim, t_dim, p_dim, rtol, atol, step_size, integrator_type, eom_type);
 
 		// Create python list from data to return
 		return toTwoDimPythonList(statesAndTimes);
@@ -346,7 +331,7 @@ struct TBP {
 
 	// Propagation function
 	std::vector<vector<double >> prop(vector<double> ic, vector<double> t, vector<double> param, int state_dim, int t_dim,
-										int p_dim, double tol, double step_size, int integrator_type, int eom_type) {
+									  int p_dim, double rtol, double atol, double step_size, int integrator_type, int eom_type) {
 		using namespace std;
 		using namespace boost::numeric::odeint;
 
@@ -361,8 +346,8 @@ struct TBP {
 		double h = t[1] > t[0] ? step_size : -step_size;
 
 		// Set integrator type -> Currently set at rk78
-		double relTol = tol;
-		double absTol = tol;
+		double relTol = rtol;
+		double absTol = atol;
 		typedef runge_kutta_fehlberg78<state_type> rk78;
 		auto stepper = make_controlled<rk78>(absTol, relTol);
 		
@@ -386,6 +371,15 @@ struct TBP {
 		}
 		else if (eom_type == 2) {
 			eom2BPScaled_stm eom(param);
+			if (integrator_type == 0) {
+				size_t steps = integrate_const(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
+			}
+			else if (integrator_type == 1) {
+				size_t steps = integrate_adaptive(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
+			}
+		}
+		else if (eom_type == 3) {
+			eom2BPScaled eom(param);
 			if (integrator_type == 0) {
 				size_t steps = integrate_const(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
 			}

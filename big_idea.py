@@ -5,7 +5,6 @@
 
 from nnet import Neurocontroller
 import boost_tbp
-import time
 import neatfast as neat
 from traj_config import *
 from orbit_util import *
@@ -17,12 +16,9 @@ import pickle
 def eval_traj_neat(genome, config):
     """
     Evaluates a neural network's ability as a controller for the defined problem, using a NEAT-style network.
-    :param genome:
-    :param config:
-    :return:
     """
 
-    # Scales for network inputs
+    # Define scales for network inputs
     du = np.max((a0_max, af_max))
     tu = np.sqrt(du ** 3 / gm)
     mu = m0
@@ -46,26 +42,29 @@ def eval_traj_neat(genome, config):
         y0, yf = make_new_bcs()
 
         # Integrate trajectory
-        y, miss_ind, full_traj, dv1, dv2 = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu, mu, fu,
-                                                              Isp, tol=tol)
-        # Check if integration was stopped early
+        y, miss_ind, full_traj, dv1, dv2 = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du,
+                                                                        tu, mu, fu, Isp)
+
+        # Check if integration was stopped early - assign large penalty if so
         if len(y.shape) == 0:
             f[i] = 10000
             continue
-        # Create logical list for indices of 2D components
-        # ind_2d = [True, True, False, True, True, False, False]
+
         # Get final state
         yf_actual = y[-2, ind_dim]
+        yf_actual[n_dim:] -= dv1[:n_dim]
         yf_target = yf[ind_dim[:-1]]
-        # Calculate ratio of initial mass to final mass
-        # TODO fix mass ratio calculation
+
+        # Calculate propellant mass ratio and final time ratio
         m_ratio = (y0[-1] - y[-1, -1]) / y0[-1]
         t_ratio = ti[-1] / ti[-2]
+
+        # Get fitness
         f[i] = traj_fit_func(yf_actual, yf_target, y0, m_ratio, t_ratio)
 
     # Calculate scalar fitness
     if num_cases > 1:
-        # TODO test this out
+        # TODO test this out with different weights
         c = 1.  # weight to favor mean vs std
         f_mean = np.mean(f)
         f_std = np.std(f)
@@ -108,6 +107,9 @@ def make_new_bcs():
 
 
 def evalTraj(W, params):
+    '''
+    Evaluates a NN that was trained with a genetic algorithm.
+    '''
     # Extract parameters
     n_in, n_hid, n_out, scales_in, scales_out, t0, tf, y0, yf, m_dry, T_max_kN, tol, num_nodes, num_cases, num_outages = params
     # Construct NN
@@ -126,7 +128,7 @@ def evalTraj(W, params):
     f = np.ones(num_cases) * np.inf
     for i in range(num_cases):
         # Integrate trajectory
-        y, miss_ind = integrate_func_missed_thrust(thrust_fcn, y0, deepcopy(ti), yf, m_dry, T_max_kN, du, tu, mu, fu, tol=tol)
+        y, miss_ind = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu, mu, fu)
         # Check if integration was stopped early
         if len(y.shape) == 0:
             if y == -1:
@@ -151,11 +153,8 @@ def evalTraj(W, params):
 def traj_fit_func(y, yf, y0, m_ratio, t_ratio=0.):
     """
     Calculates a scalar fitness value for a trajectory based on weighted sum of final state error plus the final mass.
-    :param y:
-    :param yf:
-    :param m_ratio:
-    :return:
     """
+    # Convert states to keplerian elements
     if n_dim == 2:
         a0, e0, w0, f0 = inertial_to_keplerian_2d(y0[ind_dim], gm=gm)
         a1, e1, w1, f1 = inertial_to_keplerian_2d(y, gm=gm)
@@ -165,6 +164,7 @@ def traj_fit_func(y, yf, y0, m_ratio, t_ratio=0.):
         a1, e1, i1, w1, om1, f1 = inertial_to_keplerian_3d(y, gm=gm)
         a2, e2, i2, w2, om2, f2 = inertial_to_keplerian_3d(yf, gm=gm)
 
+    # Get periapsis and apoapsis radii
     rp0 = a0 * (1 - e0)
     rp1 = a1 * (1 - e1)
     rp2 = a2 * (1 - e2)
@@ -172,32 +172,35 @@ def traj_fit_func(y, yf, y0, m_ratio, t_ratio=0.):
     ra1 = a1 * (1 + e1)
     ra2 = a2 * (1 + e2)
 
+    # Calculate error in states
     drp = np.abs(rp2 - rp1) / a0_min
     dra = np.abs(ra2 - ra1) / a0_min
     da = np.abs(a2 - a1) / a0_min
     dw = np.abs(fix_angle(w2 - w1, np.pi, -np.pi) / np.pi)
     df = np.abs(fix_angle(f2 - f1, np.pi, -np.pi) / np.pi)
 
-    K = 0
-    drp = 0 if drp < 0.001 else drp + K
-    dra = 0 if dra < 0.001 else dra + K
-    da = 0 if da < 0.001 else da + K
-    dw = 0 if dw < 0.005 else dw + K
-    df = 0 if df < 0.005 else df + K
+    # Set an acceptable threshold - if error is less than this, don't count it at all
+    # K = 0
+    # drp = 0 if drp < 0.001 else drp + K
+    # dra = 0 if dra < 0.001 else dra + K
+    # da = 0 if da < 0.001 else da + K
+    # dw = 0 if dw < 0.005 else dw + K
+    # df = 0 if df < 0.005 else df + K
 
     # Set cost function based on final trajectory type
     if elliptical_final:
         # Elliptic final
-        weights = np.array([1, 1, 1, 0.5], np.float) * 10
-        m_ratio *= 5
-        # f = np.sum(np.max((np.square(np.array([drp, dra, dw, df]) * weights),
-        #                    np.abs(   np.array([drp, dra, dw, df]) * weights)), axis=0)) + m_ratio * m_ratio
-        f = np.sum(np.square(np.array([drp, dra, dw, df]) * weights)) + m_ratio + t_ratio - 1
+        state_weights = np.array([1, 1, 1, 0.5]) * 20
+        mass_weight = 5
+        time_weight = 10
+        f = np.sum(np.max((np.square([drp, dra, dw, df] * state_weights),
+                           np.abs(   [drp, dra, dw, df] * state_weights)), axis=0))\
+            + m_ratio * mass_weight + (t_ratio - 1) * time_weight
     else:
         # Circular final
         weights = np.array([1, 1, 0, 0], np.float) * 20
-        f = np.sum(np.max((np.square(np.array([drp, da, dw, df]) * weights),
-                           np.abs(   np.array([drp, da, dw, df]) * weights)), axis=0)) + m_ratio * m_ratio
+        f = np.sum(np.max((np.square([drp, da, dw, df] * weights),
+                           np.abs(   [drp, da, dw, df] * weights)), axis=0)) + m_ratio * m_ratio
 
     # Penalize going too close to central body
     if rp_penalty:
@@ -214,16 +217,16 @@ def traj_fit_func(y, yf, y0, m_ratio, t_ratio=0.):
     return f
 
 
-def integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu, mu, fu, Isp, tol=1e-8,
-                                 save_full_traj=False):
+def integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu, mu, fu, Isp,
+                                 save_full_traj=False, fixed_step=False):
     """
     Integrate a trajectory using boost_2bp with each leg having fixed thrust. Updates the thrust vector between each leg
     """
 
     # Define lengths of vectors for C++
     state_size, time_size = len(y0), 2
-    param_size = 18 if variable_power else 6
-    # param = [gm, mdry, thrust_vec x3, ref power, min power, max power, thrust coef x5, isp coef x5]
+    param_size = 17 if variable_power else 5
+    # param = [mdry, thrust_vec x3, ref power, min power, max power, thrust coef x5, isp coef x5]
 
     # Create placeholder matrix for trajectory
     y = np.zeros((len(ti), state_size))
@@ -245,85 +248,112 @@ def integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu
     scales = np.array([du, du, du, du / tu, du / tu, du / tu, mu])
 
     # Main loop
-    integrator_type = 0 # 0 fixed step, 1 adaptive step
+    # Choose type of integrator and equations of motion
+    if fixed_step:
+        integrator_type = 0 # 0 fixed step
+    else:
+        integrator_type = 1 # adaptive step
     eom_type = 0 # 0 constant power, 1 variable power, 2 state transition matrix
+    full_traj = []
     for i in range(len(ti) - 2):
+        # Check if orbital energy is within reasonable bounds - terminate integration if not
         r = np.linalg.norm(y[i, :3])
         eps = (np.linalg.norm(y[i, 3:6])**2 / 2 - gm / r)
         if (eps > max_energy or eps < min_energy) and not save_full_traj:
             return np.array(0), 0, 0, 0, 0
+
         # Fixed step integrator step size
         step_size = (ti[i+1] - ti[i]) / 20
-        # ratio of dry to wet mass for NN
-        mass_ratio = m_dry / y[i, -1]
+
+        # ratio of remaining propellant mass, and time ratio
+        mass_ratio = (y[i, -1] - m_dry) / (y[0, -1] - m_dry)
         time_ratio = ti[i] / ti[-2]
+
         # Check if i is supposed to miss thrust for this segment
         if i in miss_ind or y[i, -1] <= m_dry + 0.01:
+            # Missed-thrust event, or no propellant remaining
             thrust = np.array([0, 0, 0])
         else:
             # query NN to get next thrust vector
             thrust = thrust_fcn(np.hstack((y[i, ind_dim], yf[ind_dim[:-1]], mass_ratio, time_ratio))) * T_max_kN / fu
+
         # create list of parameters to pass to integrator
         if variable_power:
-            param = [float(gm), float(m_dry / mu), float(thrust[0]), float(thrust[1]), float(thrust[2]), power_reference,
-                     power_min, power_max, float(thrust_power_coef[0]), float(thrust_power_coef[1]), float(thrust_power_coef[2]),
-                     float(thrust_power_coef[3]), float(thrust_power_coef[4]), float(isp_power_coef[0]), float(isp_power_coef[1]),
-                     float(isp_power_coef[2]), float(isp_power_coef[3]), float(isp_power_coef[4])]
+            param = [float(m_dry / mu), float(thrust[0]), float(thrust[1]), float(thrust[2]), power_reference, power_min,
+                     power_max, float(thrust_power_coef[0]), float(thrust_power_coef[1]), float(thrust_power_coef[2]),
+                     float(thrust_power_coef[3]), float(thrust_power_coef[4]), float(isp_power_coef[0]),
+                     float(isp_power_coef[1]), float(isp_power_coef[2]), float(isp_power_coef[3]), float(isp_power_coef[4])]
         else:
-            param = [float(gm), float(Isp / du * tu), float(m_dry / mu), float(thrust[0]), float(thrust[1]), float(thrust[2])]
+            param = [float(g0_ms2 * Isp / du * tu), float(m_dry / mu), float(thrust[0]), float(thrust[1]), float(thrust[2])]
+
         # propagate from the current state until the next time step
-        traj = tbp.prop(list(y[i] / scales), [ti[i], ti[i+1]], param, state_size, time_size, param_size, tol, step_size,
-                        int(integrator_type), int(eom_type))
+        traj = tbp.prop(list(y[i] / scales), [ti[i], ti[i+1]], param, state_size, time_size, param_size, rtol, atol,
+                        step_size, int(integrator_type), int(eom_type))
+
         # save full trajectory
-        if i == 0:
-            full_traj = traj
-        else:
-            full_traj.extend(traj[1:])
+        full_traj.extend(traj[1:])
+
         # save final state of current leg
         y[i+1] = np.array(traj[-1])[1:] * scales
 
-    # Compute a minimum-energy Lambert arc to the target point
-
-    final_tol = 0.05 # nondimensional position
-    if np.linalg.norm((y[-2, :3] - yf[:3]) / scales[:3]) > final_tol:
+    # Check if final position is "close" to target position - if not, compute a Lambert arc to exactly match target state
+    final_tol = 0.1 # non-dimensional position
+    if np.linalg.norm((y[-2, :3] - yf[:3]) / scales[:3]) > final_tol and do_terminal_lambert_arc:
+        # Compute velocities of two points of a Lambert arc connecting final point and target point
         v1, v2, tof = min_energy_lambert(y[-2, :3], yf[:3])
-        dv1 = v1 - y[-2, 3:6]
-        dv2 = yf[3:6] - v2
-        dv1_mag = np.linalg.norm(dv1)
-        dv2_mag = np.linalg.norm(dv2)
-        ti[-1] = ti[-2] + tof / tu
-        m_penultimate = y[-2, -1] / np.exp(dv1_mag * 1000 / g0_ms2 / Isp_chemical) / mu
-        m_final = m_penultimate / np.exp(dv2_mag * 1000 / g0_ms2 / Isp_chemical)
 
-        # y[-2, -1] = m_penultimate # TODO add an integrator that only does six orbital elements - then mass can be zero
-        integrator_type = 0  # constant
-        eom_type = 0  # constant
-        state_size = len(y[-2])
-        step_size = (ti[-1] - ti[-2]) / 20
-        param = [float(gm), float(Isp / du * tu), float(m_dry / mu), float(0), float(0), float(0)]
-        traj = tbp.prop(list(y[-2] / scales), [ti[-2], ti[-1]], param, state_size, time_size, param_size,
-                        tol, step_size, int(integrator_type), int(eom_type))
+        # Compute first required delta v
+        dv1 = v1 - y[-2, 3:6]
+        dv1_mag = np.linalg.norm(dv1)
+
+        # Add time of flight to time vector
+        ti[-1] = ti[-2] + tof / tu
+
+        # Add first delta v
+        y[-2, 3:6] += dv1
+
+        # Compute mass after maneuver
+        m_penultimate = y[-2, -1] / np.exp(dv1_mag * 1000 / g0_ms2 / Isp_chemical) / mu
+        y[-2, -1] = m_penultimate * mu
+
+        # Set up integration of Lambert arc
+        eom_type = 3 # 2BP only
+        state_size = len(y[-2]) - 1
+        step_size = (ti[-1] - ti[-2]) / 50
+        param, param_size = [], 0
+        # Integrate Lambert arc
+        traj = tbp.prop(list(y[-2, :-1] / scales[:-1]), [ti[-2], ti[-1]], param, state_size, time_size, param_size,
+                        rtol, atol, step_size, int(integrator_type), int(eom_type))
 
         # Add last leg to the trajectory
-        last_leg = np.array(traj[1:])
+        last_leg = np.hstack((np.array(traj[1:]), m_penultimate * np.ones((len(traj) - 1, 1))))
         full_traj = np.vstack((full_traj, last_leg))
-        full_traj[-1, -1] = m_final
 
         # save final state of current leg
-        y[-1] = np.hstack((traj[-1][1:7], m_final)) * scales
+        y[-1] = full_traj[-1, 1:] * scales
+
+        # Compute second required delta V to get on to target orbit
+        dv2 = yf[3:6] - y[-1, 3:6]
+        y[-1, 3:6] += dv2
+
+        # Compute mass after maneuver
+        dv2_mag = np.linalg.norm(dv2)
+        m_final = m_penultimate / np.exp(dv2_mag * 1000 / g0_ms2 / Isp_chemical)
+
+        # Update final mass
+        y[-1, -1] = m_final
+        full_traj[-1, -1] = m_final
 
     else:
+        # No maneuver
         dv1, dv2 = np.zeros(3, float), np.zeros(3, float)
         y[-1] = y[-2]
         ti[-1] = ti[-2]
         full_traj = np.array(full_traj)
-        # m_penultimate, m_final = y[-2, -1], y[-2, -1]
-        # print()
-        # print('else statement')
-        # print()
 
     # rescale states
     full_traj[:, 1:] = full_traj[:, 1:] * scales
+
     return y, miss_ind, full_traj, dv1, dv2
 
 
@@ -414,8 +444,7 @@ def calculate_prop_margins(genome, config):
             missed_thrust_rd_factor = 3
 
         # Integrate trajectory
-        y, miss_ind = integrate_func_missed_thrust(thrust_fcn, y0, copy(ti), yf, m_dry, T_max_kN, du, tu, mu, fu,
-                                                   Isp, tol=tol)
+        y, miss_ind = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu, mu, fu, Isp)
 
         # Save final mass
         print(y[-1, -1])

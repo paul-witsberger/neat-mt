@@ -92,17 +92,19 @@ n_hid = 4
 n_out = 2
 
 # Define integration parameters
-tol = 1e-7
-num_nodes = 50
+rtol = 1e-9       # relative tolerance
+atol = 1e-9       # absolute tolerance
+num_nodes = 100   # number of thrust updates
+n_steps = 20      # substeps between two nodes
 
 # Specify missed thrust cases
-num_cases = 1
+num_cases = 10
 num_outages = 0
 
 # Choose to add a penalty for going too close to the central body in the fitness function
 rp_penalty = True
-min_allowed_rp = a_earth_km * 0.90
-rp_penalty_multiplier = 5000
+min_allowed_rp = a_earth_km * 0.95
+rp_penalty_multiplier = 10000
 
 # Choose to add a penalty for not thrusting at all (just staying in initial orbit)
 no_thrust_penalty = True
@@ -112,10 +114,13 @@ max_energy = - u_sun_km3s2 / 2 / max(a0_max, af_max) * 0.8
 min_energy = - u_sun_km3s2 / 2 / min(a0_min, af_min) * 1.2
 
 # Choose whether missed thrust events occur or not, and scale time-between-events and recovery-duration
-missed_thrust_allowed = False
+missed_thrust_allowed = True
 missed_thrust_tbe_factor = 0.5
 missed_thrust_rd_factor = 2
 
 # Specify the indices of the input array that should be used
-# input_indices = np.array([0, 1, 2, 3, 8, 9])
-input_indices = None
+input_indices = np.array([0, 1, 2, 3, 8, 9])
+# input_indices = None
+
+# Specify if a Lambert arc should be computed to match the final state
+do_terminal_lambert_arc = True

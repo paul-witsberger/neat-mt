@@ -262,6 +262,7 @@ def keplerian_to_inertial_3d(state, gm=gm):
     state_peri = keplerian_to_perifocal_3d(state, gm=gm)
     r_p, v_p = state_peri[:3], state_peri[3:]
 
+    # Perform 3-1-3 rotation element-wise
     dcm3_1 = np.zeros((1, 3, 3)) if len(a.shape) == 0 else np.zeros((len(a.shape), 3, 3))
     dcm1_2 = dcm3_1.copy()
     dcm3_3 = dcm3_1.copy()
@@ -299,16 +300,17 @@ def keplerian_to_perifocal_2d(state, gm=gm):
 
 
 def keplerian_to_inertial_2d(state, gm=gm):
+    # Convert to perifocal frame
     a, e, w, f = state
     state_peri = keplerian_to_perifocal_2d(state, gm=gm)
     r_p, v_p = state_peri[:2], state_peri[2:]
-
+    # Construct DCMs
     dcm = np.zeros((1, 2, 2)) if len(a.shape) == 0 else np.zeros((len(a.shape), 2, 2))
     dcm[:, 0, 0] = np.cos(w)
     dcm[:, 0, 1] = -np.sin(w)
     dcm[:, 1, 0] = np.sin(w)
     dcm[:, 1, 1] = np.cos(w)
-
+    # Rotate radius and velocity vectors
     r_i = np.matmul(dcm, r_p)
     v_i = np.matmul(dcm, v_p)
     return np.hstack((r_i, v_i))
@@ -335,12 +337,14 @@ def keplerian_to_mee_3d(state):
 
 def mee_to_keplerian_3d(state):
     p, f, g, h, k, L = state
+    # Convert to Keplerian
     om = np.arctan2(k, h)
     i = 2 * np.arctan(np.sqrt(h ** 2 + k ** 2))
     w = np.arctan2(g, f) - om
     e = np.sqrt(g ** 2 + f ** 2)
     a = p / (1 - g ** 2 - f ** 2)
     v = L - om - w
+    # Make sure angles are properly scaled
     w = fix_angle(w, 2 * np.pi, 0.)
     om = fix_angle(w, 2 * np.pi, 0.)
     v = fix_angle(v, 2 * np.pi, 0.)
@@ -348,29 +352,21 @@ def mee_to_keplerian_3d(state):
 
 
 def rotate_vnc_to_inertial_3d(vec, state):
-    r_vec, v_vec = state[:3], state[3:6]
-    v_hat = v_vec / np.linalg.norm(v_vec)
-    h_vec = np.cross(r_vec, v_vec)
-    n_hat = h_vec / np.linalg.norm(h_vec)
-    c_hat = np.cross(v_hat, n_hat)
-    dcm = np.vstack((v_hat, n_hat, c_hat))
-
-    # a, e, i, w, om, f = inertial_to_keplerian_3d(state, gm=gm)
-    # th = w + f
-    # fpa =
-    # co, so = np.cos(om), np.sin(om)
-    # ci, si = np.cos(i), np.sin(i)
-    # ct, st = np.cos(th + fpa), np.sin(th + fpa)
-    # dcm =
-
+    r_vec, v_vec = state[:3], state[3:6]    # radius and velocity vectors
+    v_hat = v_vec / np.linalg.norm(v_vec)   # velocity unit vector
+    h_vec = np.cross(r_vec, v_vec)          # angular momentum vector
+    n_hat = h_vec / np.linalg.norm(h_vec)   # angular momentum unit vector; also, normal unit vector
+    c_hat = np.cross(v_hat, n_hat)          # co-normal unit vector
+    dcm = np.vstack((v_hat, n_hat, c_hat))  # direction cosine matrix
     return np.matmul(dcm, vec)
 
 
 def fix_angle(angle, upper_bound=np.pi, lower_bound=-np.pi):
+    # Check that bounds are properly defined
     assert upper_bound - lower_bound == 2 * np.pi
     while True:
-        angle += 2 * np.pi if angle < lower_bound else 0.
-        angle -= 2 * np.pi if angle > upper_bound else 0.
+        angle += 2 * np.pi if angle < lower_bound else 0.  # add 2pi if too negative
+        angle -= 2 * np.pi if angle > upper_bound else 0.  # subtract 2pi if too positive
         if angle <= upper_bound and angle >= lower_bound:
             return angle
 
@@ -383,7 +379,6 @@ def min_energy_lambert(r0, r1, gm=gm):
     # Get properties of transfer angle
     cos_dnu = np.dot(r0, r1) / r0mag / r1mag
     sin_dnu = np.linalg.norm(np.cross(r0, r1)) / r0mag / r1mag
-    # TODO check that transfer is positively oriented (e.g. always counter-clockwise)
 
     # Calculate p of minimum energy transfer
     pmin = r0mag * r1mag / np.sqrt(r0mag ** 2 + r1mag ** 2 - 2 * np.dot(r0, r1)) * (1 - cos_dnu)
@@ -392,6 +387,10 @@ def min_energy_lambert(r0, r1, gm=gm):
     v0min = np.sqrt(gm * pmin) / r0mag / r1mag / sin_dnu * (r1 - r0 * (1 - r1mag / pmin * (1 - cos_dnu)))
     v0minmag = np.linalg.norm(v0min)
 
+    # Check direction of transfer - make sure angular momentum is positive
+    hmin = np.cross(r0, v0min)
+    hminmag = np.linalg.norm(hmin)
+
     # Get other properties of transfer
     amin = -(gm / 2) / (v0minmag ** 2 / 2 - gm / r0mag)
     emin = np.sqrt(1 - pmin / amin)
@@ -399,28 +398,39 @@ def min_energy_lambert(r0, r1, gm=gm):
 
     # Calculate velocity at second position
     v1minmag = np.sqrt(max(2 * gm / r1mag - gm / amin, 0))
-    hmin = np.cross(r0, v0min)
-    hminmag = np.linalg.norm(hmin)
     v1minunit = np.cross(hmin, r1) / hminmag / r1mag
     v1min = v1minunit * v1minmag
 
-    # Calculate true and eccentric anomaly
-    nu0 = np.arccos((pmin / r0mag - 1) / emin)
+    # Calculate true anomaly with a numerical safety check and quadrant check
+    # Initial point
+    sign0 = np.sign(np.dot(r0, v0min) / r0mag / v0minmag)
+    arg0 = (pmin / r0mag - 1) / emin
+    arg0 = min(max(-1., arg0), 1.)
+    nu0 = np.arccos(arg0) * sign0
+    # Final point
+    sign1 = np.sign(np.dot(r0, v1min) / r1mag / v1minmag)
     arg1 = (pmin / r1mag - 1) / emin
-    arg1 = min(max(-1, arg1), 1)
-    # print('Lambert failed.')
-    nu1 = np.arccos(arg1)
+    arg1 = min(max(-1., arg1), 1.)
+    nu1 = np.arccos(arg1) * sign1
+
+    # Calculate eccentric anomaly
     E0 = 2 * np.arctan(np.sqrt((1 - emin) / (1 + emin)) * np.tan(nu0 / 2))
     E1 = 2 * np.arctan(np.sqrt((1 - emin) / (1 + emin)) * np.tan(nu1 / 2))
-    E1 = E1 + 2 * np.pi if E1 < E0 else E1
+    E0 = fix_angle(E0, 2 * np.pi, 0)
+    E1 = fix_angle(E1, 2 * np.pi, 0)
 
     # Calculate time of flight
     t0 = (E0 - emin * np.sin(E0)) / n
     t1 = (E1 - emin * np.sin(E1)) / n
-    tof = t1 - t0
 
-    if np.any(np.hstack((np.isnan(v0min), np.isnan(v1min), np.isnan(tof)))):
-        print('Lambert failed.')
+    # Check the direction of the transfer and flip if necessary
+    if hmin[-1] > 0:
+        tof = t1 - t0
+    else:
+        per = 2 * np.pi / n
+        tof = per - t1 + t0
+        v0min = -v0min
+        v1min = -v1min
 
     return v0min, v1min, tof
 
