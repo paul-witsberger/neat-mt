@@ -75,7 +75,7 @@ def eval_traj_neat(genome, config):
     return -f
 
 
-def make_new_bcs():
+def make_new_bcs(true_final_f=true_final_f):
     while True:
         a0 = np.random.rand() * (a0_max - a0_min) + a0_min
         af = np.random.rand() * (af_max - af_min) + af_min
@@ -86,7 +86,12 @@ def make_new_bcs():
     w0 = np.random.rand() * (w0_max - w0_min) + w0_min
     wf = np.random.rand() * (wf_max - wf_min) + wf_min
     f0 = np.random.rand() * (f0_max - f0_min) + f0_min
-    ff = np.random.rand() * (ff_max - ff_min) + ff_min
+    if true_final_f:
+        assert f0_ref is not None and ff_ref is not None
+        f_frac = (f0 - f0_min) / (f0_max - f0_min)
+        ff = f_frac * (ff_max - ff_min) + ff_min
+    else:
+        ff = np.random.rand() * (ff_max - ff_min) + ff_min
     
     if n_dim == 2:
         y0 = keplerian_to_inertial_2d(np.array([a0, e0, w0, f0]), gm=gm)
@@ -173,34 +178,43 @@ def traj_fit_func(y, yf, y0, m_ratio, t_ratio=0.):
     ra2 = a2 * (1 + e2)
 
     # Calculate error in states
+    dr_tol_close = 0.00385 * au_to_km / a0_max
+    dr_tol_far = 0.3 * au_to_km / a0_max
+    yf_mag = np.linalg.norm(yf[n_dim:])
+    dv_tol = 0.241 / yf_mag
+    dr = np.linalg.norm(yf[:n_dim] - y[:n_dim]) / a0_max
+    dv = np.linalg.norm(yf[n_dim:] - y[n_dim:]) / yf_mag
+    print('dr = %.3f km' % (dr * a0_max))
+    print('dv = %.3f km/s' % (np.linalg.norm(yf[n_dim:]) - np.linalg.norm(y[n_dim:])))
     drp = np.abs(rp2 - rp1) / a0_min
     dra = np.abs(ra2 - ra1) / a0_min
-    da = np.abs(a2 - a1) / a0_min
     dw = np.abs(fix_angle(w2 - w1, np.pi, -np.pi) / np.pi)
     df = np.abs(fix_angle(f2 - f1, np.pi, -np.pi) / np.pi)
-
-    # Set an acceptable threshold - if error is less than this, don't count it at all
-    # K = 0
-    # drp = 0 if drp < 0.001 else drp + K
-    # dra = 0 if dra < 0.001 else dra + K
-    # da = 0 if da < 0.001 else da + K
-    # dw = 0 if dw < 0.005 else dw + K
-    # df = 0 if df < 0.005 else df + K
+    if dr > dr_tol_far:
+        # Far away
+        penalty = 100
+        states = [drp, dra, dw, df]
+    else:
+        states = [drp, dra, dr, dv]
+        if dr < dr_tol_close:
+            # Within sphere-of-influence
+            penalty = 10
+        else:
+            # Intermediate
+            penalty = 50
 
     # Set cost function based on final trajectory type
     if elliptical_final:
-        # Elliptic final
-        state_weights = np.array([1, 1, 1, 0.5]) * 20
-        mass_weight = 5
-        time_weight = 10
-        f = np.sum(np.max((np.square([drp, dra, dw, df] * state_weights),
-                           np.abs(   [drp, dra, dw, df] * state_weights)), axis=0))\
-            + m_ratio * mass_weight + (t_ratio - 1) * time_weight
+        state_weights = np.array([1, 1, 1, 1]) * penalty
     else:
-        # Circular final
-        weights = np.array([1, 1, 0, 0], np.float) * 20
-        f = np.sum(np.max((np.square([drp, da, dw, df] * weights),
-                           np.abs(   [drp, da, dw, df] * weights)), axis=0)) + m_ratio * m_ratio
+        state_weights = np.array([1, 1, 0, 0]) * penalty
+    mass_weight = 5
+    time_weight = 20
+    dr_weight = 10
+    dv_weight = 10
+    f = np.sum(np.max((np.square(states * state_weights),
+                       np.abs(   states * state_weights)), axis=0))\
+        + m_ratio * mass_weight + (t_ratio - 1) * time_weight + penalty
 
     # Penalize going too close to central body
     if rp_penalty:
@@ -263,7 +277,7 @@ def integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu
             return np.array(0), 0, 0, 0, 0
 
         # Fixed step integrator step size
-        step_size = (ti[i+1] - ti[i]) / 20
+        step_size = (ti[i+1] - ti[i]) / n_steps
 
         # ratio of remaining propellant mass, and time ratio
         mass_ratio = (y[i, -1] - m_dry) / (y[0, -1] - m_dry)
@@ -300,10 +314,11 @@ def integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu
     final_tol = 0.1 # non-dimensional position
     if np.linalg.norm((y[-2, :3] - yf[:3]) / scales[:3]) > final_tol and do_terminal_lambert_arc:
         # Compute velocities of two points of a Lambert arc connecting final point and target point
-        v1, v2, tof = min_energy_lambert(y[-2, :3], yf[:3])
+        # v1, v2, tof = min_energy_lambert(y[-2, :3], yf[:3])
+        tof, dv1, dv2 = lambert_min_dv(gm, y[-2, :3], y[-2, 3:6], yf[:3], yf[3:6])
 
         # Compute first required delta v
-        dv1 = v1 - y[-2, 3:6]
+        # dv1 = v1 - y[-2, 3:6]
         dv1_mag = np.linalg.norm(dv1)
 
         # Add time of flight to time vector
@@ -333,7 +348,7 @@ def integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu
         y[-1] = full_traj[-1, 1:] * scales
 
         # Compute second required delta V to get on to target orbit
-        dv2 = yf[3:6] - y[-1, 3:6]
+        # dv2 = yf[3:6] - y[-1, 3:6]
         y[-1, 3:6] += dv2
 
         # Compute mass after maneuver

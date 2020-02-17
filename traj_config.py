@@ -17,16 +17,21 @@ else:
 a0_max, a0_min = a_earth_km, a_earth_km
 e0_max, e0_min = e_earth, e_earth
 i0_max, i0_min = 0, 0
-w0_max, w0_min = w_earth_rad, w_earth_rad
+w0_max, w0_min = lp_earth_rad, lp_earth_rad
 om0_max, om0_min = 0, 0
-f0_max, f0_min = 2 * np.pi / 3, 2 * np.pi / 3
+f0_ref = 259.7 * np.pi / 180
+# f0_max, f0_min = 274.6 * np.pi / 180, 245.3 * np.pi / 180
+f0_max, f0_min = f0_ref, f0_ref
 # Final orbit parameters
 af_max, af_min = a_mars_km, a_mars_km
 ef_max, ef_min = e_mars, e_mars
 if_max, if_min = 0, 0
-wf_max, wf_min = w_mars_rad, w_mars_rad
+wf_max, wf_min = lp_mars_rad, lp_mars_rad
 omf_max, omf_min = 0, 0
-ff_max, ff_min = np.pi / 2, np.pi / 2
+ff_ref = 1 * np.pi / 180
+# ff_max, ff_min = 10.5 * np.pi / 180, -8.5 * np.pi / 180
+ff_max, ff_min = ff_ref, ff_ref
+true_final_f = False
 # Flag that specifies if orbit is elliptical or circular
 elliptical_initial = True if e0_max > 0 else False
 elliptical_final = True if ef_max > 0 else False
@@ -51,7 +56,7 @@ Isp_chemical = 370 # for the final correction burns
 
 # Define time of flight
 t0 = 0.
-tf = 2 * year_to_sec
+tf = 1000 * day_to_sec
 
 # Define scales for the state vectors to non-dimensionalize later
 input_frame = 'kep'  # 'kep', 'mee', 'car'
@@ -75,16 +80,16 @@ else:
     raise ValueError('Undefined input frame')
 scales_in = np.hstack((scales_in, scales_in, 1., 1.))  # add twice for current plus target, then add 1 for mass, time
 if n_dim == 2:
-    scales_out = np.array([[-np.pi, np.pi], [0, 1]])  # thrust angle, thrust throttle
+    scales_out = np.array([[-np.pi/6, np.pi/6], [0, 1]])  # thrust angle, thrust throttle
 else:
     scales_out = np.array([[0, 2 * np.pi], [0, 2 * np.pi], [0, 1]])  # alpha, beta, throttle
 
 # Specify output activation type (NOTE: this does not automatically change with the NEAT config file)
-out_node_scales = np.array([[-1, 1], [0, 1]])
+out_node_scales = np.array([[-1, 1], [-1, 1]])
 
 # Optionally specify a set of angle choices, and have an output node for each - categorical classification
 use_multiple_angle_nodes = False
-angle_choices = np.array([0, np.pi])
+angle_choices = np.array([0, np.pi / 2, np.pi, 3 * np.pi / 2])
 
 # For the GA (not NEAT), define network size
 n_in = 10
@@ -94,11 +99,11 @@ n_out = 2
 # Define integration parameters
 rtol = 1e-9       # relative tolerance
 atol = 1e-9       # absolute tolerance
-num_nodes = 100   # number of thrust updates
+num_nodes = 200   # number of thrust updates
 n_steps = 20      # substeps between two nodes
 
 # Specify missed thrust cases
-num_cases = 10
+num_cases = 6
 num_outages = 0
 
 # Choose to add a penalty for going too close to the central body in the fitness function
@@ -115,12 +120,12 @@ min_energy = - u_sun_km3s2 / 2 / min(a0_min, af_min) * 1.2
 
 # Choose whether missed thrust events occur or not, and scale time-between-events and recovery-duration
 missed_thrust_allowed = True
-missed_thrust_tbe_factor = 0.5
-missed_thrust_rd_factor = 2
+missed_thrust_tbe_factor = 1.
+missed_thrust_rd_factor = 2.
 
 # Specify the indices of the input array that should be used
-input_indices = np.array([0, 1, 2, 3, 8, 9])
-# input_indices = None
+# input_indices = np.array([0, 1, 2, 3, 8, 9])
+input_indices = None
 
 # Specify if a Lambert arc should be computed to match the final state
-do_terminal_lambert_arc = True
+do_terminal_lambert_arc = False

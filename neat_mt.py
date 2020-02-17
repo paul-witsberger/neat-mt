@@ -27,7 +27,7 @@ def run():
     num_workers = os.cpu_count() - 1
     # num_workers = 1  # for debugging purposes
     pe = neat.ParallelEvaluator(num_workers, eval_traj_neat)
-    max_generations = 100
+    max_generations = 1000
     winner = pop.run(pe.evaluate, n=max_generations)
 
     # Save the winner.

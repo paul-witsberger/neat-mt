@@ -115,15 +115,26 @@ lan_neptune_rad = np.array(131.72169) * deg_to_rad
 lan_pluto_rad = np.array(110.30347) * deg_to_rad
 
 # Longitude of perihelion (omega)
-w_mercury_rad = np.array(77.45645) * deg_to_rad
-w_venus_rad = np.array(131.53298) * deg_to_rad
-w_earth_rad = np.array(102.97419) * deg_to_rad
-w_mars_rad = np.array(336.04084) * deg_to_rad
-w_jupiter_rad = np.array(14.75385) * deg_to_rad
-w_saturn_rad = np.array(92.43194) * deg_to_rad
-w_uranus_rad = np.array(170.96424) * deg_to_rad
-w_neptune_rad = np.array(44.97135) * deg_to_rad
-w_pluto_rad = np.array(224.06676) * deg_to_rad
+lp_mercury_rad = np.array(77.45645) * deg_to_rad
+lp_venus_rad = np.array(131.53298) * deg_to_rad
+lp_earth_rad = np.array(102.97419) * deg_to_rad
+lp_mars_rad = np.array(336.04084) * deg_to_rad
+lp_jupiter_rad = np.array(14.75385) * deg_to_rad
+lp_saturn_rad = np.array(92.43194) * deg_to_rad
+lp_uranus_rad = np.array(170.96424) * deg_to_rad
+lp_neptune_rad = np.array(44.97135) * deg_to_rad
+lp_pluto_rad = np.array(224.06676) * deg_to_rad
+
+# Argument of periapsis (omega)
+w_mercury_rad = lp_mercury_rad - lan_mercury_rad
+w_venus_rad = lp_venus_rad - lan_venus_rad
+w_earth_rad = lp_earth_rad - lan_earth_rad
+w_mars_rad = lp_mars_rad - lan_mars_rad
+w_jupiter_rad = lp_jupiter_rad - lan_jupiter_rad
+w_saturn_rad = lp_saturn_rad - lan_saturn_rad
+w_uranus_rad = lp_uranus_rad - lan_uranus_rad
+w_neptune_rad = lp_neptune_rad - lan_neptune_rad
+w_pluto_rad = lp_pluto_rad - lan_pluto_rad
 
 # Periapsis and apoapsis radius and velocity
 rp_earth_km = np.array(147.09e6)

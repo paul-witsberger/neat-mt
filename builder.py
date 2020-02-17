@@ -49,7 +49,7 @@ def recreate_traj_from_pkl(fname, neat_net=False, print_mass=False, save_traj=Fa
     ti /= tu
 
     # Get the period of initial, final and target orbits, then integrate each of the trajectories
-    tol_analytic = rtol
+    tol_analytic = 1e-6
     yinit_tf = period_from_inertial(y0[:-1], gm=gm)
     ytarg_tf = period_from_inertial(yf, gm=gm)
     yinit = integrate.solve_ivp(eom2BP, [t0, yinit_tf], y0[ind_dim], rtol=rtol, atol=atol)
@@ -100,15 +100,14 @@ def recreate_traj_from_pkl(fname, neat_net=False, print_mass=False, save_traj=Fa
     ax.quiver(y[:-2, 0] / au_to_km, y[:-2, 1] / au_to_km,
               thrust_vec_inertial[:-2, 0], thrust_vec_inertial[:-2, 1], **quiver_opts)
     ax.quiver(y[-2:, 0] / au_to_km, y[-2:, 1] / au_to_km,
-              thrust_vec_inertial[-2:, 0] / 100, thrust_vec_inertial[-2:, 1] / 100, **quiver_opts)
+              thrust_vec_inertial[-2:, 0] * T_max_kN * 20, thrust_vec_inertial[-2:, 1] * T_max_kN * 20, **quiver_opts)
 
     # Plot the target orbit - also, save the figure since this is the last element of the plot
     plotTraj2DStruct(ytarg, False, True, fig_ax=(fig, ax), label='Target', end=True, show_legend=False)
 
     # Plot mass and thrust
     plotMassHistory(ti * tu * sec_to_day, y[:, -1], mt_ind=miss_ind)
-    plotThrustHistory(ti * tu * sec_to_day, np.vstack((thrust_vec_body, rotate_thrust(np.vstack((dv1[:n_dim],
-                      dv2[:n_dim])), -y[-2:]))), T_max_kN, mt_ind=miss_ind)
+    plotThrustHistory(ti[:-2] * tu * sec_to_day, thrust_vec_body, T_max_kN, mt_ind=miss_ind)
 
     # Save trajectory to file (states, times, controls)
     if save_traj:

@@ -1,7 +1,11 @@
 import numpy as np
+from math import gamma
 from traj_config import gm, year_to_sec
+from numba import njit
+from copy import copy
 
 
+@njit
 def hohmann_circ(a1, a2, gm=gm):
     """
     Returns the delta V to transfer between two circular orbits using a Hohmann transfer
@@ -21,6 +25,7 @@ def hohmann_circ(a1, a2, gm=gm):
     return dv
 
 
+@njit
 def hohmann_rp_ra(rp1, vp1, ra2, va2, gm=gm):
     """
     Returns the delta V to transfer between two co-linear elliptical orbits using a Hohmann transfer
@@ -40,6 +45,7 @@ def hohmann_rp_ra(rp1, vp1, ra2, va2, gm=gm):
     return dv
 
 
+@njit
 def coe4_from_rv(r_vec, v_vec, gm=gm):
     r = np.linalg.norm(r_vec)
     v = np.linalg.norm(v_vec)
@@ -47,7 +53,7 @@ def coe4_from_rv(r_vec, v_vec, gm=gm):
     eps = v**2 / 2 - gm / r
     a = - gm / 2 / eps
     # Get p from ang mom
-    h = np.linalg.norm(np.cross(r_vec, v_vec))
+    h = np.linalg.norm(cross(r_vec, v_vec))
     p = h**2 / gm
     # Get e from a and p
     e = np.sqrt(1 - p / a)
@@ -66,6 +72,7 @@ def coe4_from_rv(r_vec, v_vec, gm=gm):
     return coe
 
 
+@njit
 def period_from_inertial(state, gm=gm, max_time_sec=10*year_to_sec):
     a, e, i, w, om, f = inertial_to_keplerian_3d(state, gm=gm)
     if e < 1:
@@ -76,6 +83,7 @@ def period_from_inertial(state, gm=gm, max_time_sec=10*year_to_sec):
     return per
 
 
+@njit
 def inertial_to_local(state, has_extra=True):
     s1i = state[:4]
     s2i = state[4:8]
@@ -95,6 +103,7 @@ def inertial_to_local(state, has_extra=True):
         return np.array([r1, r2, v1, v2, th1, th2, al1, al2])
 
 
+@njit
 def inertial_to_keplerian(state, gm=gm):
     r1, r2, v1, v2, th1, th2, al1, al2, mr, tr = inertial_to_local(state)
     eps1 = v1 ** 2 / 2 - gm / r1
@@ -128,6 +137,7 @@ def inertial_to_keplerian(state, gm=gm):
     return np.array([a1, a2, e1, e2, w1, w2, ta1, ta2, mr, tr])
 
 
+@njit
 def inertial_to_local_2d(state):
     x, y, vx, vy = state
     r = np.sqrt(x * x + y * y)
@@ -137,6 +147,7 @@ def inertial_to_local_2d(state):
     return np.array([r, v, th, al])
 
 
+@njit
 def inertial_to_keplerian_2d_old(state, gm=gm):
     r, v, th, al = inertial_to_local_2d(state)
     eps = v ** 2 / 2 - gm / r
@@ -156,6 +167,7 @@ def inertial_to_keplerian_2d_old(state, gm=gm):
     return np.array([a, e, w, ta])
 
 
+@njit
 def inertial_to_keplerian_2d(state, gm=gm):
     r, v, th, al = inertial_to_local_2d(state)
     eps = v ** 2 / 2 - gm / r
@@ -163,7 +175,7 @@ def inertial_to_keplerian_2d(state, gm=gm):
     fpa = -fix_angle(al - th - np.pi / 2)
     # h = r * v * np.cos(fpa)
     p = r / gm * (v * v) * r * np.cos(fpa) ** 2
-    e = np.sqrt(1 - np.min((p / a, 1.0)))
+    e = np.sqrt(1 - min(p / a, 1.0))
     if e < 1e-6:
         arg = np.sign(p / r - 1)
         w = 0
@@ -177,15 +189,24 @@ def inertial_to_keplerian_2d(state, gm=gm):
     return np.array([a, e, w, ta])
 
 
+@njit
+def cross(left, right):
+    x = ((left[1] * right[2]) - (left[2] * right[1]))
+    y = ((left[2] * right[0]) - (left[0] * right[2]))
+    z = ((left[0] * right[1]) - (left[1] * right[0]))
+    return np.array([x, y, z])
+
+
+@njit
 def inertial_to_keplerian_3d(state, gm=gm):
     r_vec, v_vec = state[:3], state[3:]
     tol = 1e-8
     r = np.linalg.norm(r_vec)
     v = np.linalg.norm(v_vec)
-    h_vec = np.cross(r_vec, v_vec)
+    h_vec = cross(r_vec, v_vec)
     h = np.linalg.norm(h_vec)
     k_vec = np.array([0, 0, 1])
-    n_vec = np.cross(k_vec, h_vec)
+    n_vec = cross(k_vec, h_vec)
     n = np.linalg.norm(n_vec)
 
     # Eccentricity
@@ -233,7 +254,7 @@ def inertial_to_keplerian_3d(state, gm=gm):
     elif e < tol:
         # Special case: circular inclined - argument of latitude
         f = np.arccos(np.dot(n_vec, r_vec) / (n * r))
-        if r[2] < 0:
+        if r_vec[2] < 0:
             f = 2 * np.pi - f
     elif (i < tol or np.abs(np.pi - i) < tol):
         # Special case: elliptical equatorial - true longitude of periapsis
@@ -242,13 +263,14 @@ def inertial_to_keplerian_3d(state, gm=gm):
             f = 2 * np.pi - f
     else:
         # General
-        f = np.arccos(np.min((np.dot(e_vec, r_vec) / (e * r), 1.)))
+        f = np.arccos(min(np.dot(e_vec, r_vec) / (e * r), 1.))
         if np.dot(r_vec, v_vec) < 0:
             f = 2 * np.pi - f
 
     return np.array([a, e, i, w, om, f])
 
 
+@njit
 def keplerian_to_perifocal_3d(state, gm=gm):
     a, e, i, w, om, f = state
     p = a * (1 - e ** 2)
@@ -257,6 +279,7 @@ def keplerian_to_perifocal_3d(state, gm=gm):
     return np.hstack((r_p, v_p))
 
 
+@njit
 def keplerian_to_inertial_3d(state, gm=gm):
     a, e, i, w, om, f = state
     state_peri = keplerian_to_perifocal_3d(state, gm=gm)
@@ -291,31 +314,43 @@ def keplerian_to_inertial_3d(state, gm=gm):
     return np.hstack((r_i, v_i))
 
 
+@njit
 def keplerian_to_perifocal_2d(state, gm=gm):
     a, e, w, f = state
     p = a * (1 - e ** 2)
-    r_p = np.hstack((p * np.cos(f) / (1 + e * np.cos(f)), p * np.sin(f) / (1 + e * np.cos(f))))
-    v_p = np.hstack((-np.sqrt(gm / p) * np.sin(f), np.sqrt(gm / p) * (e + np.cos(f))))
+    r_p = np.hstack((np.array(p * np.cos(f) / (1 + e * np.cos(f))), np.array(p * np.sin(f) / (1 + e * np.cos(f)))))
+    v_p = np.hstack((np.array(-np.sqrt(gm / p) * np.sin(f)), np.array(np.sqrt(gm / p) * (e + np.cos(f)))))
     return np.hstack((r_p, v_p))
 
 
+@njit
 def keplerian_to_inertial_2d(state, gm=gm):
     # Convert to perifocal frame
     a, e, w, f = state
     state_peri = keplerian_to_perifocal_2d(state, gm=gm)
     r_p, v_p = state_peri[:2], state_peri[2:]
     # Construct DCMs
-    dcm = np.zeros((1, 2, 2)) if len(a.shape) == 0 else np.zeros((len(a.shape), 2, 2))
-    dcm[:, 0, 0] = np.cos(w)
-    dcm[:, 0, 1] = -np.sin(w)
-    dcm[:, 1, 0] = np.sin(w)
-    dcm[:, 1, 1] = np.cos(w)
+    # if len(np.shape(a)) == 0:
+    dcm = np.zeros((2, 2))
+    dcm[0, 0] = np.cos(w)
+    dcm[0, 1] = -np.sin(w)
+    dcm[1, 0] = np.sin(w)
+    dcm[1, 1] = np.cos(w)
+    # else:
+    #     dcm = np.zeros((len(np.shape(a)), 2, 2))
+    #     dcm[:, 0, 0] = np.cos(w)
+    #     dcm[:, 0, 1] = -np.sin(w)
+    #     dcm[:, 1, 0] = np.sin(w)
+    #     dcm[:, 1, 1] = np.cos(w)
     # Rotate radius and velocity vectors
-    r_i = np.matmul(dcm, r_p)
-    v_i = np.matmul(dcm, v_p)
+    # r_i = np.matmul(dcm, r_p)
+    # v_i = np.matmul(dcm, v_p)
+    r_i = dcm.dot(r_p)
+    v_i = dcm.dot(v_p)
     return np.hstack((r_i, v_i))
 
 
+@njit
 def keplerian_to_mee_3d(state):
     a, e, i, w, om, ta = state
     # Check that values are acceptable
@@ -335,6 +370,7 @@ def keplerian_to_mee_3d(state):
     return np.array([p, f, g, h, k, L])
 
 
+@njit
 def mee_to_keplerian_3d(state):
     p, f, g, h, k, L = state
     # Convert to Keplerian
@@ -351,16 +387,18 @@ def mee_to_keplerian_3d(state):
     return np.array([a, e, i, w, om, v])
 
 
+@njit
 def rotate_vnc_to_inertial_3d(vec, state):
     r_vec, v_vec = state[:3], state[3:6]    # radius and velocity vectors
     v_hat = v_vec / np.linalg.norm(v_vec)   # velocity unit vector
-    h_vec = np.cross(r_vec, v_vec)          # angular momentum vector
+    h_vec = cross(r_vec, v_vec)          # angular momentum vector
     n_hat = h_vec / np.linalg.norm(h_vec)   # angular momentum unit vector; also, normal unit vector
-    c_hat = np.cross(v_hat, n_hat)          # co-normal unit vector
+    c_hat = cross(v_hat, n_hat)          # co-normal unit vector
     dcm = np.vstack((v_hat, n_hat, c_hat))  # direction cosine matrix
     return np.matmul(dcm, vec)
 
 
+@njit
 def fix_angle(angle, upper_bound=np.pi, lower_bound=-np.pi):
     # Check that bounds are properly defined
     assert upper_bound - lower_bound == 2 * np.pi
@@ -371,14 +409,19 @@ def fix_angle(angle, upper_bound=np.pi, lower_bound=-np.pi):
             return angle
 
 
+@njit
 def min_energy_lambert(r0, r1, gm=gm):
+    assert r0[2] == 0 and r1[2] == 0
     # Get magnitude of position vectors
     r0mag = np.linalg.norm(r0)
     r1mag = np.linalg.norm(r1)
 
     # Get properties of transfer angle
     cos_dnu = np.dot(r0, r1) / r0mag / r1mag
-    sin_dnu = np.linalg.norm(np.cross(r0, r1)) / r0mag / r1mag
+    sin_dnu = np.linalg.norm(cross(r0, r1)) / r0mag / r1mag
+    dnu = np.arctan2(sin_dnu, cos_dnu)
+    if dnu < 0:
+        print('dnu is negative')
 
     # Calculate p of minimum energy transfer
     pmin = r0mag * r1mag / np.sqrt(r0mag ** 2 + r1mag ** 2 - 2 * np.dot(r0, r1)) * (1 - cos_dnu)
@@ -388,32 +431,37 @@ def min_energy_lambert(r0, r1, gm=gm):
     v0minmag = np.linalg.norm(v0min)
 
     # Check direction of transfer - make sure angular momentum is positive
-    hmin = np.cross(r0, v0min)
+    hmin = cross(r0, v0min)
     hminmag = np.linalg.norm(hmin)
+
+    if hmin[-1] < 0:
+        v0min = -v0min
 
     # Get other properties of transfer
     amin = -(gm / 2) / (v0minmag ** 2 / 2 - gm / r0mag)
     emin = np.sqrt(1 - pmin / amin)
     n = np.sqrt(gm / amin ** 3)
 
-    # Calculate velocity at second position
-    v1minmag = np.sqrt(max(2 * gm / r1mag - gm / amin, 0))
-    v1minunit = np.cross(hmin, r1) / hminmag / r1mag
-    v1min = v1minunit * v1minmag
-
-    # Calculate true anomaly with a numerical safety check and quadrant check
-    # Initial point
+    # Calculate true anomaly of initial point - numerical safety check for cosine, and ascending/descending check
     sign0 = np.sign(np.dot(r0, v0min) / r0mag / v0minmag)
     arg0 = (pmin / r0mag - 1) / emin
     arg0 = min(max(-1., arg0), 1.)
     nu0 = np.arccos(arg0) * sign0
-    # Final point
-    sign1 = np.sign(np.dot(r0, v1min) / r1mag / v1minmag)
-    arg1 = (pmin / r1mag - 1) / emin
-    arg1 = min(max(-1., arg1), 1.)
-    nu1 = np.arccos(arg1) * sign1
+    # Calculate true anomaly of final point - rotate nu in a positive sense
+    if hmin[-1] > 0:
+        nu1 = nu0 + dnu
+    else:
+        nu1 = nu0 - dnu + 2 * np.pi
 
-    # Calculate eccentric anomaly
+    # Calculate velocity at second position
+    v1minmag = np.sqrt(max(2 * gm / r1mag - gm / amin, 0))
+    arg = min(max(hminmag / r1mag / v1minmag, -1), 1)
+    fpa = np.arccos(arg) * int(nu1 < np.pi)
+    dcm = np.array([[np.cos(np.pi / 2 - fpa), -np.sin(np.pi / 2 - fpa)], [np.sin(np.pi / 2 - fpa), np.cos(np.pi / 2 - fpa)]])
+    v1minunit = np.hstack((np.matmul(dcm, r1[:2] / r1mag), 0))
+    v1min = v1minunit * v1minmag
+
+    # Calculate eccentric anomaly using true anomaly
     E0 = 2 * np.arctan(np.sqrt((1 - emin) / (1 + emin)) * np.tan(nu0 / 2))
     E1 = 2 * np.arctan(np.sqrt((1 - emin) / (1 + emin)) * np.tan(nu1 / 2))
     E0 = fix_angle(E0, 2 * np.pi, 0)
@@ -423,16 +471,219 @@ def min_energy_lambert(r0, r1, gm=gm):
     t0 = (E0 - emin * np.sin(E0)) / n
     t1 = (E1 - emin * np.sin(E1)) / n
 
-    # Check the direction of the transfer and flip if necessary
-    if hmin[-1] > 0:
-        tof = t1 - t0
-    else:
+    # Calculate time of flight - add a revolution if tof < 0
+    tof = t1 - t0
+    if hmin[-1] < 0:
         per = 2 * np.pi / n
-        tof = per - t1 + t0
-        v0min = -v0min
-        v1min = -v1min
+        tof += per
 
     return v0min, v1min, tof
+
+
+@njit
+def c2(psi):
+    eps = 1.0
+    if psi > eps:
+        res = (1 - np.cos(np.sqrt(psi))) / psi
+    elif psi < -eps:
+        res = (np.cosh(np.sqrt(-psi)) - 1) / (-psi)
+    else:
+        res = 1.0 / 2.0
+        delta = (-psi) / gamma(2 + 2 + 1)
+        k = 1
+        while res + delta != res:
+            res = res + delta
+            k += 1
+            delta = (-psi) ** k / gamma(2 * k + 2 + 1)
+
+    return res
+
+
+@njit
+def c3(psi):
+    eps = 1.0
+    if psi > eps:
+        res = (np.sqrt(psi) - np.sin(np.sqrt(psi))) / (psi * np.sqrt(psi))
+    elif psi < -eps:
+        res = (np.sinh(np.sqrt(-psi)) - np.sqrt(-psi)) / (-psi * np.sqrt(-psi))
+    else:
+        res = 1.0 / 6.0
+        delta = (-psi) / gamma(2 + 3 + 1)
+        k = 1
+        while res + delta != res:
+            res = res + delta
+            k += 1
+            delta = (-psi) ** k / gamma(2 * k + 3 + 1)
+
+    return res
+
+
+@njit
+def vallado(k, r0, r, tof, short, numiter, rtol):
+    if short:
+        t_m = +1
+    else:
+        t_m = -1
+
+    norm_r0 = np.dot(r0, r0) ** 0.5
+    norm_r = np.dot(r, r) ** 0.5
+    norm_r0_times_norm_r = norm_r0 * norm_r
+    norm_r0_plus_norm_r = norm_r0 + norm_r
+
+    cos_dnu = np.dot(r0, r) / norm_r0_times_norm_r
+
+    A = t_m * (norm_r * norm_r0 * (1 + cos_dnu)) ** 0.5
+
+    if A == 0.0:
+        raise RuntimeError("Cannot compute orbit, phase angle is 180 degrees")
+
+    psi = 0.0
+    psi_low = -4 * np.pi
+    psi_up = 4 * np.pi ** 2
+
+    count = 0
+
+    while count < numiter:
+        y = norm_r0_plus_norm_r + A * (psi * c3(psi) - 1) / c2(psi) ** 0.5
+        if A > 0.0:
+            # Readjust xi_low until y > 0.0
+            # Translated directly from Vallado
+            while y < 0.0:
+                psi_low = psi
+                psi = (
+                    0.8
+                    * (1.0 / c3(psi))
+                    * (1.0 - norm_r0_times_norm_r * np.sqrt(c2(psi)) / A)
+                )
+                y = norm_r0_plus_norm_r + A * (psi * c3(psi) - 1) / c2(psi) ** 0.5
+
+        xi = np.sqrt(y / c2(psi))
+        tof_new = (xi ** 3 * c3(psi) + A * np.sqrt(y)) / np.sqrt(k)
+
+        # Convergence check
+        if np.abs((tof_new - tof) / tof) < rtol:
+            break
+        count += 1
+        # Bisection check
+        condition = tof_new <= tof
+        psi_low = psi_low + (psi - psi_low) * condition
+        psi_up = psi_up + (psi - psi_up) * (not condition)
+
+        psi = (psi_up + psi_low) / 2
+    else:
+        raise RuntimeError("Maximum number of iterations reached")
+
+    f = 1 - y / norm_r0
+    g = A * np.sqrt(y / k)
+
+    gdot = 1 - y / norm_r
+
+    v0 = (r - f * r0) / g
+    v = (gdot * r - r0) / g
+
+    return v0, v
+
+
+def lambert_min_dv(k, r0, v0, rf, vf, short=True, do_print=False):
+    # Define parameters for search
+    count = 0
+    max_count = 20
+    min_dv = 1e10
+    rtol = 1e-8
+    numiter = 50
+    r0_mag = np.linalg.norm(r0)
+    high = np.pi * np.sqrt(r0_mag ** 3 / k)
+    low = high * 0.1
+
+    # Compute initial guesses
+    tof = [low, (high + low) / 3, (high + low) * 2 / 3, high]
+    dv = list()
+    for _tof in tof:
+        try:
+            sol = vallado(k, r0, rf, _tof, short=short, numiter=numiter, rtol=rtol)
+        except RuntimeError:
+            sol = ([10, 10, 10], [10, 10, 10])
+        dv.append(np.linalg.norm((sol[0] - v0)) + np.linalg.norm((sol[1] - vf)))
+
+    # Adjust bounds and start direction of search
+    dv = np.array(dv)
+    if dv[0] > dv[1] and dv[1] > dv[2]:
+        if dv[2] > dv[3]:
+            low = tof[2]
+        else:
+            low = tof[1]
+    elif dv[1] < dv[2] and dv[2] < dv[3]:
+        if dv[0] < dv[1]:
+            high = tof[1]
+        else:
+            high = tof[2]
+    else:
+        high = tof[2]
+        low = tof[1]
+    best_tof, last_best = tof[np.argsort(dv)[0]], tof[np.argsort(dv)[1]]
+    last_tof = best_tof
+    best_dv = np.min(dv)
+
+    # Main loop
+    while True:
+        tof = (high + low) / 2
+        if do_print:
+            print('TOF = %.3f sec' % tof)
+        try:
+            dv = vallado(k, r0, rf, tof, short=short, numiter=numiter, rtol=rtol)
+        except RuntimeError:
+            dv = ([10, 10, 10], [10, 10, 10])
+        cost = np.linalg.norm((dv[0] - v0)) + np.linalg.norm((dv[1] - vf))
+        if do_print:
+            print('Cost = %.3f km/s' % cost)
+            dif = cost - min_dv
+            print('Diff = %.3e km/s' % dif)
+
+        if cost <= min_dv:
+            min_dv = cost
+            best_dv = copy(dv)
+            last_best = best_tof
+            best_tof = tof
+        if count >= max_count:
+            break
+
+        dir_last_best = np.sign(tof - last_best)
+        dir_best = np.sign(tof - best_tof)
+        dir_last = np.sign(tof - last_tof)
+
+        if count > 0:
+            if dir_best == 0:
+                if dir_last_best > 0:
+                    low = last_best
+                elif dir_last_best < 0:
+                    high = last_best
+                else:
+                    high *= 1.1
+            elif dir_last > 0 and dir_best > 0:
+                high = tof
+            elif dir_last < 0 and dir_best < 0:
+                low = tof
+            elif dir_last > 0 and dir_best < 0:
+                low = last_tof
+            elif dir_last < 0 and dir_best > 0:
+                high = last_tof
+            elif dir_last == 0 and dir_best > 0:
+                high = tof
+            elif dir_last == 0 and dir_best < 0:
+                low = tof
+            else:
+                print('Reached else.')
+
+        last_tof = tof
+        count += 1
+        if do_print:
+            print('[{0:0.4e}, {1:0.4e}]'.format(low, high))
+            print()
+
+    dv1 = best_dv[0] - v0
+    dv2 = vf - best_dv[1]
+    return best_tof, dv1, dv2
+
 
 if __name__ == "__main__":
     state_k = np.array([150e6, 0.5, 2, 2, 2, 2])
