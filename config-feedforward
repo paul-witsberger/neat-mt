@@ -60,11 +60,11 @@ enabled_default         = True
 enabled_mutate_rate     = 0
 
 [DefaultSpeciesSet]
-compatibility_threshold = 3.2
+compatibility_threshold = 3.149
 
 [DefaultStagnation]
 species_fitness_func = max
-max_stagnation = 50
+max_stagnation = 100
 
 [DefaultReproduction]
 elitism            = 2

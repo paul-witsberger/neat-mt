@@ -8,9 +8,9 @@ n_dim = 2
 assert n_dim == 2 or n_dim == 3
 # Create logical list for indices of 2D components
 if n_dim == 2:
-    ind_dim = [True, True, False, True, True, False, False]
+    ind_dim = np.array([True, True, False, True, True, False, False])
 else:
-    ind_dim = [True] * 6 + [False]
+    ind_dim = np.array([True] * 6 + [False])
 
 # Define initial and final orbits
 # Initial orbit parameters
@@ -121,7 +121,7 @@ min_energy = - u_sun_km3s2 / 2 / min(a0_min, af_min) * 1.2
 # Choose whether missed thrust events occur or not, and scale time-between-events and recovery-duration
 missed_thrust_allowed = True
 missed_thrust_tbe_factor = 1.
-missed_thrust_rd_factor = 2.
+missed_thrust_rd_factor = 1.
 
 # Specify the indices of the input array that should be used
 # input_indices = np.array([0, 1, 2, 3, 8, 9])

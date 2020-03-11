@@ -125,7 +125,8 @@ def recreate_traj_from_pkl(fname, neat_net=False, print_mass=False, save_traj=Fa
     yf_actual[n_dim:] -= dv1[:n_dim]
 
     # Calculate and print fitness
-    print('Final fitness = %f' % -traj_fit_func(yf_actual, yf[ind_dim[:-1]], y0, (y0[-1] - y[-1, -1]) / y0[-1], ti[-1] / ti[-2]))
+    f, dr, dv = traj_fit_func(yf_actual, yf[ind_dim[:-1]], y0, (y0[-1] - y[-1, -1]) / y0[-1], ti[-1] / ti[-2], output_errors=True)
+    print('Final fitness = %f' % -f)
 
 
 def make_last_traj(print_mass=True, save_traj=True):

@@ -270,7 +270,7 @@ def inertial_to_keplerian_3d(state, gm=gm):
     return np.array([a, e, i, w, om, f])
 
 
-@njit
+# @njit
 def keplerian_to_perifocal_3d(state, gm=gm):
     a, e, i, w, om, f = state
     p = a * (1 - e ** 2)
@@ -279,7 +279,7 @@ def keplerian_to_perifocal_3d(state, gm=gm):
     return np.hstack((r_p, v_p))
 
 
-@njit
+# @njit
 def keplerian_to_inertial_3d(state, gm=gm):
     a, e, i, w, om, f = state
     state_peri = keplerian_to_perifocal_3d(state, gm=gm)
@@ -402,6 +402,7 @@ def rotate_vnc_to_inertial_3d(vec, state):
 def fix_angle(angle, upper_bound=np.pi, lower_bound=-np.pi):
     # Check that bounds are properly defined
     assert upper_bound - lower_bound == 2 * np.pi
+    assert not np.isnan(angle)
     while True:
         angle += 2 * np.pi if angle < lower_bound else 0.  # add 2pi if too negative
         angle -= 2 * np.pi if angle > upper_bound else 0.  # subtract 2pi if too positive
@@ -409,7 +410,6 @@ def fix_angle(angle, upper_bound=np.pi, lower_bound=-np.pi):
             return angle
 
 
-@njit
 def min_energy_lambert(r0, r1, gm=gm):
     assert r0[2] == 0 and r1[2] == 0
     # Get magnitude of position vectors
@@ -685,16 +685,118 @@ def lambert_min_dv(k, r0, v0, rf, vf, short=True, do_print=False):
     return best_tof, dv1, dv2
 
 
+def gamma_from_r_v(r_vec, v_vec):
+    r_mag = np.linalg.norm(r_vec)
+    r_hat = r_vec / r_mag
+
+    v_mag = np.linalg.norm(v_vec)
+    v_hat = v_vec / v_mag
+
+    h_vec = np.cross(r_vec, v_vec)
+    h_mag = np.linalg.norm(h_vec)
+    assert h_mag > 0
+    h_hat = h_vec / h_mag
+
+    t_hat = np.cross(h_hat, r_hat)
+    gamma_mag = np.arccos(np.dot(t_hat, v_hat))
+    gamma_sign = 1 if np.cross(v_hat, t_hat)[-1] > 0 else -1
+    gamma = gamma_mag * gamma_sign
+    return gamma
+
+
+def min_dv_capture(r, v, gm):
+    # Make sure vectors are 3D
+    if r.size == 2:
+        r = np.append(r, 0)
+    if v.size == 2:
+        v = np.append(v, 0)
+    r_mag = np.linalg.norm(r)
+    r_hat = r / r_mag
+    v_mag = np.linalg.norm(v)
+    v_hat = v / v_mag
+
+    # Calculate flight path angle
+    gamma = gamma_from_r_v(r, v)
+
+    ra_max = 4e5 # km
+    rp = 3389.5 + 100 # km
+    # Check how s/c is moving wrt to planet
+    if gamma > 0: # ascending
+        if r_mag < ra_max: # below max ra
+            ra = ra_max
+            v0 = v_mag
+            a1 = (ra + rp) / 2
+            v1 = (gm * (2 / r_mag - 1 / a1)) ** 0.5
+            dv1 = v1 - v0
+
+        else: # above max ra
+            ra = r_mag
+            v0 = v_mag
+            a1 = (ra + rp) / 2
+            v1 = (gm * (2 / r_mag - 1 / a1)) ** 0.5
+            a0, e0, w0, f0 = inertial_to_keplerian_2d(np.hstack((r[:2], v[:2])))
+            n0 = (gm / a0 ** 3) ** 0.5
+            fdot0 = n0 * a0 * a0 / r / r * (1 - e0 ** 2) ** 0.5
+            rdot0 = r_mag * fdot0 * e0 * np.sin(f0) / (1 + e0 * np.cos(f0))
+            dv1 = np.linalg.norm([rdot0, 0, 0])
+            dv1 = v1 - v0
+
+    elif gamma < 0: # decending
+        rp1, r1, v0 = rp, r_mag, v_mag
+        eps0 = v0 ** 2 / 2 - gm / r1
+        a0 = - gm / 2 / eps0
+        e0_vec = ((v0 ** 2 - gm / r1) * r - np.dot(r, v) * v) / gm
+        e0 = np.linalg.norm(e0_vec)
+        rp0 = a0 * (1 - e0)
+        vp0 = (gm * a0 * (1 - e0 ** 2)) ** 0.5 / rp0
+        a1 = (rp1 * ((rp0 * vp0 / rp1 / v0) ** 2 - 1)) / (2 * (rp0 ** 2 * vp0 ** 2 / v0 ** 2 / rp1 / r1) - 1)
+        e1 = 1 - rp1 / a1
+        vp1 = (gm * a1 * (1 - e1 ** 2)) ** 0.5 / rp1
+        v1 = (gm * (2 / r1 - 1 / a1)) ** 0.5
+
+    else: # apse
+        ra = r_mag
+
+    v2 = (gm / rp1) ** 0.5
+    dv2 = v2 - vp1
+
+    # Calculate desired orbit
+    r_desired_mag = 2000
+    r_desired_hat = - r / np.linalg.norm(r)
+    r_desired =  r_desired_hat * r_desired_mag
+    h = np.cross(r, v)
+    if h.size == 1:
+        h = np.array([0, 0, h])
+    h_hat = h / np.linalg.norm(h)
+    v_desired_mag = np.sqrt(gm / r_desired_mag)
+    v_desired_hat = np.cross(h_hat, r_desired_hat)
+    v_desired = v_desired_hat * v_desired_mag
+    # Compute transfer
+    v0, v1, tof = min_energy_lambert(r, r_desired, gm=gm)
+    dv1 = v0 - v
+    dv2 = v_desired - v1
+    return dv1, dv2, tof
+
+
 if __name__ == "__main__":
-    state_k = np.array([150e6, 0.5, 2, 2, 2, 2])
-    state_m = keplerian_to_mee_3d(state_k)
-    state_k2 = mee_to_keplerian_3d(state_m)
-    state_i = keplerian_to_inertial_3d(state_k).ravel()
-    state_k3 = inertial_to_keplerian_3d(state_i)
-    state_m2 = keplerian_to_mee_3d(state_k3)
-    print(state_k)
-    print(state_m)
-    print(state_k2)
-    print(state_i)
-    print(state_k3)
-    print(np.allclose(state_m2, state_m))
+    test_1 = False
+    if test_1:
+        state_k = np.array([150e6, 0.5, 2, 2, 2, 2])
+        state_m = keplerian_to_mee_3d(state_k)
+        state_k2 = mee_to_keplerian_3d(state_m)
+        state_i = keplerian_to_inertial_3d(state_k).ravel()
+        state_k3 = inertial_to_keplerian_3d(state_i)
+        state_m2 = keplerian_to_mee_3d(state_k3)
+        print(state_k)
+        print(state_m)
+        print(state_k2)
+        print(state_i)
+        print(state_k3)
+        print(np.allclose(state_m2, state_m))
+
+    test_2 = True
+    if test_2:
+        r = np.array([100000, 0, 0])
+        v = np.array([1, 4, 0])
+        gamma = gamma_from_r_v(r, v)
+        print(gamma)

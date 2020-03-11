@@ -60,15 +60,30 @@ def eval_traj_neat(genome, config):
         t_ratio = ti[-1] / ti[-2]
 
         # Get fitness
-        f[i] = traj_fit_func(yf_actual, yf_target, y0, m_ratio, t_ratio)
+        f[i], dr, dv = traj_fit_func(yf_actual, yf_target, y0, m_ratio, t_ratio)
 
     # Calculate scalar fitness
+    rdo = False
+    rbdo = False
+    normal = True
     if num_cases > 1:
-        # TODO test this out with different weights
-        c = 1.  # weight to favor mean vs std
-        f_mean = np.mean(f)
-        f_std = np.std(f)
-        f = c * f_mean + (1 - c) * f_std
+        if rdo:
+            # Robust Design Optimization
+            # TODO test this out with different weights
+            c = 1.  # weight to favor mean vs std
+            f_mean = np.mean(f)
+            f_std = np.std(f)
+            f = c * f_mean + (1 - c) * f_std
+
+        # Reliability-Based Design Optimization
+        elif rbdo:
+            f_mean = np.mean(f)
+            f_constraint_violation = number_cases_outside_bounds / total_cases
+            c = 100.
+            f = f_mean + c * f_constraint_violation
+        # Mean
+        elif normal:
+            f = np.mean(f)
     else:
         f = f[0]
 
@@ -79,7 +94,7 @@ def make_new_bcs(true_final_f=true_final_f):
     while True:
         a0 = np.random.rand() * (a0_max - a0_min) + a0_min
         af = np.random.rand() * (af_max - af_min) + af_min
-        if np.abs((af - a0) / np.min((af, a0))) > 0.1:
+        if np.abs((af - a0) / min(af, a0)) > 0.1:
             break
     e0 = np.random.rand() * (e0_max - e0_min) + e0_min
     ef = np.random.rand() * (ef_max - ef_min) + ef_min
@@ -155,7 +170,8 @@ def evalTraj(W, params):
     return f
 
 
-def traj_fit_func(y, yf, y0, m_ratio, t_ratio=0.):
+@njit
+def traj_fit_func(y, yf, y0, m_ratio, t_ratio=0., output_errors=False):
     """
     Calculates a scalar fitness value for a trajectory based on weighted sum of final state error plus the final mass.
     """
@@ -184,37 +200,42 @@ def traj_fit_func(y, yf, y0, m_ratio, t_ratio=0.):
     dv_tol = 0.241 / yf_mag
     dr = np.linalg.norm(yf[:n_dim] - y[:n_dim]) / a0_max
     dv = np.linalg.norm(yf[n_dim:] - y[n_dim:]) / yf_mag
-    print('dr = %.3f km' % (dr * a0_max))
-    print('dv = %.3f km/s' % (np.linalg.norm(yf[n_dim:]) - np.linalg.norm(y[n_dim:])))
     drp = np.abs(rp2 - rp1) / a0_min
     dra = np.abs(ra2 - ra1) / a0_min
     dw = np.abs(fix_angle(w2 - w1, np.pi, -np.pi) / np.pi)
     df = np.abs(fix_angle(f2 - f1, np.pi, -np.pi) / np.pi)
     if dr > dr_tol_far:
         # Far away
-        penalty = 100
-        states = [drp, dra, dw, df]
+        penalty = 100 * np.ones(4)
+        states = np.array([drp, dra, dw, df])
     else:
-        states = [drp, dra, dr, dv]
+        states = np.array([drp, dra, dr, dv])
         if dr < dr_tol_close:
             # Within sphere-of-influence
-            penalty = 10
+            penalty = 10 * np.ones(4)
         else:
             # Intermediate
-            penalty = 50
+            penalty = 50 * np.ones(4)
 
     # Set cost function based on final trajectory type
     if elliptical_final:
-        state_weights = np.array([1, 1, 1, 1]) * penalty
+        state_weights = penalty
     else:
-        state_weights = np.array([1, 1, 0, 0]) * penalty
+        state_weights = np.array([penalty[0], penalty[1], 0., 0.])
     mass_weight = 5
     time_weight = 20
-    dr_weight = 10
-    dv_weight = 10
-    f = np.sum(np.max((np.square(states * state_weights),
-                       np.abs(   states * state_weights)), axis=0))\
-        + m_ratio * mass_weight + (t_ratio - 1) * time_weight + penalty
+
+    weighted = states * state_weights
+    squares = np.square(weighted)
+    abses = np.abs(weighted)
+    f = 0.
+    for i in range(4):
+        f += max(squares[i], abses[i])
+    f += m_ratio * mass_weight + (t_ratio - 1) * time_weight + penalty[0]
+
+    # f = np.sum(np.max((np.square(states * state_weights),
+    #                    np.abs(   states * state_weights)), axis=0))\
+    #     + m_ratio * mass_weight + (t_ratio - 1) * time_weight + penalty[0]
 
     # Penalize going too close to central body
     if rp_penalty:
@@ -224,15 +245,23 @@ def traj_fit_func(y, yf, y0, m_ratio, t_ratio=0.):
     # Penalize for not leaving initial orbit
     if no_thrust_penalty:
         kepl_scales = [ra2 - ra0, rp2 - rp0]
-        dy0 = np.sum(np.abs(np.array([ra1 - ra0, rp1 - rp0]) / kepl_scales))
+        dy0 = np.sum(np.abs(np.array([ra1 - ra0, rp1 - rp0]) / np.array(kepl_scales)))
         dy0 = 0. if dy0 > 0.2 else 1000.
         f += dy0
 
-    return f
+    # TODO always output errors
+    # if output_errors:
+    dr *= a0_max
+    dv *= yf_mag
+    # print('dr = %.3f km' % dr)
+    # print('dv = %.3f km/s' % dv)
+    return f, dr, dv
+    # else:
+    #     return f
 
 
 def integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu, mu, fu, Isp,
-                                 save_full_traj=False, fixed_step=False):
+                                 save_full_traj=False, fixed_step=False, missed_thrust_allowed=missed_thrust_allowed):
     """
     Integrate a trajectory using boost_2bp with each leg having fixed thrust. Updates the thrust vector between each leg
     """
@@ -252,7 +281,7 @@ def integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu
     tbp = boost_tbp.TBP()
 
     # Define flag for missed thrust
-    global missed_thrust_allowed
+    # global missed_thrust_allowed
     if missed_thrust_allowed:
         miss_ind = calculate_missed_thrust_events(ti * tu)
     else:
@@ -447,29 +476,57 @@ def calculate_prop_margins(genome, config):
     print(yf)
 
     # Initialize score vector
-    num_cases = 10
-    mf = np.ones(num_cases + 1) * np.inf
-    global missed_thrust_allowed, missed_thrust_tbe_factor, missed_thrust_rd_factor
+    num_cases = 1000
+    mf = np.empty(num_cases + 1, np.float)
+    dr = np.empty_like(mf)
+    dv = np.empty_like(mf)
+    # global missed_thrust_allowed, missed_thrust_tbe_factor, missed_thrust_rd_factor
     for i in range(num_cases + 1):
         if i == 0:
             missed_thrust_allowed = False
         else:
             missed_thrust_allowed = True
-            missed_thrust_tbe_factor = 0.2
-            missed_thrust_rd_factor = 3
+        #     missed_thrust_tbe_factor = 0.2
+        #     missed_thrust_rd_factor = 3
 
         # Integrate trajectory
-        y, miss_ind = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu, mu, fu, Isp)
+        y, miss_ind, full_traj, dv1, dv2 = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du,
+                                                                        tu, mu, fu, Isp,
+                                                                        missed_thrust_allowed=missed_thrust_allowed)
+
+        yf_actual = y[-2, ind_dim]
+        f, _dr, _dv = traj_fit_func(yf_actual, yf[ind_dim[:-1]], y0, (y0[-1] - y[-1, -1]) / y0[-1], ti[-1] / ti[-2],
+                                  output_errors=True)
 
         # Save final mass
-        print(y[-1, -1])
+        # print(y[-1, -1])
         mf[i] = y[-1, -1]
+        dr[i] = _dr
+        dv[i] = _dv
 
     # Calculate propellant margin
     m_star = mf[0]
     m_prop_star = y0[-1] - m_star
-    m_tilde = np.mean(mf[1:])
-    M = (m_star - m_tilde) / m_prop_star
+    m_tilde = mf[1:]
+    M_mean = np.mean((m_star - m_tilde) / m_prop_star)
+    M_std = np.std((m_star - m_tilde) / m_prop_star)
+    M = M_mean
+    print('*********')
+    print(M_mean)
+    print(M_std)
+
+    print(np.mean(m_tilde))
+    print(np.std(m_tilde))
+
+    dr_a = np.mean(dr)
+    dr_s = np.std(dr)
+    dv_a = np.mean(dv)
+    dv_s = np.std(dv)
+
+    print(dr_a)
+    print(dr_s)
+    print(dv_a)
+    print(dv_s)
 
     return M
 

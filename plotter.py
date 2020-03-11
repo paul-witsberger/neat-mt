@@ -151,6 +151,7 @@ def plotTraj2DStruct(yout, show_plot=True, save_plot=False, fname='tmp_traj_plot
         ax.set_ylabel('Y [km]', fontname='Times New Roman')
     ax.set_title(title, fontname='Times New Roman')
     ax.axis('equal')
+    plt.tight_layout()
     if show_legend:
         plt.legend()
     if show_plot:
@@ -169,6 +170,7 @@ def plotMassHistory(t, m, show_plot=False, save_plot=True, fname='tmp_mass_hist'
     ax.set_title('Mass History')
     ax.set_xlabel('Time (day)')
     ax.set_ylabel('Mass (kg)')
+    plt.tight_layout()
     if show_plot:
         plt.show()
     if save_plot:
