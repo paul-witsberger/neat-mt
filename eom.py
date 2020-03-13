@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from traj_config import gm
 
 
-def eom2BP(t, x, u=gm):
+def eom2BP(t: float, x: np.ndarray, u: float=gm) -> np.ndarray:
     x_dot = np.zeros(x.shape)
     r = np.sqrt(np.sum(np.square(x[0:2])))
     x_dot[0:2] = x[2:]
@@ -12,7 +12,7 @@ def eom2BP(t, x, u=gm):
     return x_dot
 
 
-def eom2BPThrust(t, y, yf, m_dry, u=gm, thrust_fcn=None, Isp_s=2000, T_max_kN=0.001):
+def eom2BPThrust(t: float, y: np.ndarray, yf: np.ndarray, m_dry: float, u: float=gm, thrust_fcn=None, Isp_s: float=2000, T_max_kN: float=0.001) -> np.ndarray:
     # Define parameters
     y_dot = np.zeros(y.shape)
     r = np.sqrt(np.sum(np.square(y[0:2])))
@@ -29,7 +29,7 @@ def eom2BPThrust(t, y, yf, m_dry, u=gm, thrust_fcn=None, Isp_s=2000, T_max_kN=0.
     return y_dot
 
 
-def eom2BP_scaled(t, x_sc, eta_r, eta_v):
+def eom2BP_scaled(t: float, x_sc: np.ndarray, eta_r: np.ndarray, eta_v: np.ndarray) -> np.ndarray:
     x_sc_dot = np.zeros(x_sc.shape)
     r_sc = np.sqrt(np.sum(np.square(x_sc[0:3])))
     x_sc_dot[0:3] = x_sc[3:] * eta_r
@@ -37,7 +37,7 @@ def eom2BP_scaled(t, x_sc, eta_r, eta_v):
     return x_sc_dot
 
 
-def eomMEE(L, x, T, I_sp, m0):
+def eomMEE(L: float, x: np.ndarray, T: float, I_sp: float, m0: float) -> np.ndarray:
     # Pull out MEE from vector
     p, f, g, h, k, [], m = x
 
@@ -73,7 +73,8 @@ def eomMEE(L, x, T, I_sp, m0):
     return xdot
 
 
-def eom2BPThrustScaled(t, y, yf, m_dry, thrust_fcn, du, tu, mu, fu, Isp_s=2000, T_max_kN=0.001):
+def eom2BPThrustScaled(t: float, y: np.ndarray, yf: np.ndarray, m_dry: float, thrust_fcn, du: float, tu: float,
+                       mu: float, fu: float, Isp_s: float=2000, T_max_kN: float=0.001) -> np.ndarray:
     # Define parameters
     y_dot = np.zeros(y.shape)
     r = np.sqrt(np.sum(np.square(y[0:2])))

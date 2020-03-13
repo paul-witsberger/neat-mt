@@ -14,7 +14,8 @@ import multiprocessing as mp
 from itertools import repeat
 
 
-def recreate_traj_from_pkl(fname, neat_net=False, print_mass=False, save_traj=False, traj_fname="traj_data.hdf5"):
+def recreate_traj_from_pkl(fname: str, neat_net: bool = False, print_mass: bool = False, save_traj: bool = False,
+                           traj_fname: str = "traj_data.hdf5"):
     # Load best generation from pickle file
     with open(fname, 'rb') as f:
         xopt = pickle.load(f)
@@ -49,7 +50,6 @@ def recreate_traj_from_pkl(fname, neat_net=False, print_mass=False, save_traj=Fa
     ti /= tu
 
     # Get the period of initial, final and target orbits, then integrate each of the trajectories
-    tol_analytic = 1e-6
     yinit_tf = period_from_inertial(y0[:-1], gm=gm)
     ytarg_tf = period_from_inertial(yf, gm=gm)
     yinit = integrate.solve_ivp(eom2BP, [t0, yinit_tf], y0[ind_dim], rtol=rtol, atol=atol)
@@ -95,8 +95,9 @@ def recreate_traj_from_pkl(fname, neat_net=False, print_mass=False, save_traj=Fa
 
     # Plot arrows without heads
     q_scale = np.max(np.linalg.norm(thrust_vec_body, axis=1)) * 20
-    quiver_opts = {'angles':'xy', 'zorder':8, 'width':0.004, 'units':'width', 'scale':q_scale, 'scale_units':'width',
-                   'minlength':0.1, 'headaxislength':0, 'headlength':0, 'headwidth':0, 'color':arrow_color}
+    quiver_opts = {'angles': 'xy', 'zorder': 8, 'width': 0.004, 'units': 'width', 'scale': q_scale,
+                   'scale_units': 'width', 'minlength': 0.1, 'headaxislength': 0, 'headlength': 0, 'headwidth': 0,
+                   'color': arrow_color}
     ax.quiver(y[:-2, 0] / au_to_km, y[:-2, 1] / au_to_km,
               thrust_vec_inertial[:-2, 0], thrust_vec_inertial[:-2, 1], **quiver_opts)
     ax.quiver(y[-2:, 0] / au_to_km, y[-2:, 1] / au_to_km,
@@ -125,11 +126,11 @@ def recreate_traj_from_pkl(fname, neat_net=False, print_mass=False, save_traj=Fa
     yf_actual[n_dim:] -= dv1[:n_dim]
 
     # Calculate and print fitness
-    f, dr, dv = traj_fit_func(yf_actual, yf[ind_dim[:-1]], y0, (y0[-1] - y[-1, -1]) / y0[-1], ti[-1] / ti[-2], output_errors=True)
+    f, dr, dv = traj_fit_func(yf_actual, yf[ind_dim[:-1]], y0, (y0[-1] - y[-1, -1]) / y0[-1], ti[-1] / ti[-2])
     print('Final fitness = %f' % -f)
 
 
-def make_last_traj(print_mass=True, save_traj=True):
+def make_last_traj(print_mass: bool = True, save_traj: bool = True):
     # Choose file to load
     neat_net = True
     if neat_net:
@@ -140,7 +141,8 @@ def make_last_traj(print_mass=True, save_traj=True):
     recreate_traj_from_pkl(fname, neat_net, print_mass=print_mass, save_traj=save_traj)
 
 
-def get_thrust_history(ti, y, yf, m_dry, T_max_kN, thrust_fcn):
+def get_thrust_history(ti: np.ndarray, y: np.ndarray, yf: np.ndarray, m_dry: float, T_max_kN: float,
+                       thrust_fcn: Neurocontroller.get_thrust_vec_neat) -> np.ndarray:
     # Calculate thrust vector at each time step
     thrust_vec = np.zeros((len(ti) - 2, 3), float)
     for i in range(len(ti) - 2):
@@ -157,7 +159,7 @@ def get_thrust_history(ti, y, yf, m_dry, T_max_kN, thrust_fcn):
     return thrust_vec
 
 
-def rotate_thrust(thrust_vec_body, y):
+def rotate_thrust(thrust_vec_body: np.ndarray, y: np.ndarray) -> np.ndarray:
     # Velocity angle with respect to inertial X
     rot_ang = np.arctan2(y[:, 4], y[:, 3])
     # Direction cosine matrix
@@ -194,7 +196,7 @@ def make_neat_network_diagram():
                        show_disabled=False, prune_unused=True)
 
 
-def load_traj(traj_fname='traj_data.hdf5'):
+def load_traj(traj_fname: str = 'traj_data.hdf5') -> (np.ndarray, np.ndarray, np.ndarray):
     # Load saved trajectory data
     with h5py.File(traj_fname, 'r') as f:
         t = f['t'][()]
@@ -203,10 +205,15 @@ def load_traj(traj_fname='traj_data.hdf5'):
     return t, x, u
 
 
-def sensitivity(t, x, m, u):
-    '''
-    Calculate sensitivity matrix
-    '''
+def sensitivity(t: np.ndarray, x: np.ndarray, m: np.ndarray, u: np.ndarray) -> np.ndarray:
+    """
+    Calculate sensitivty matrix.
+    :param t:
+    :param x:
+    :param m:
+    :param u:
+    :return:
+    """
 
     # Number of rows = number of timesteps
     n = len(t)
@@ -222,12 +229,12 @@ def sensitivity(t, x, m, u):
 
     # OLD - Calculate L2 norm (Frobenius/matrix norm) of the matrix and return
     # Calculate the L2 norm of each state
-    sensitivity = np.sqrt(np.sum(np.square(ddvdx), 1)).reshape((-1, 1))
-    # print('Sensitivity = %f' % sensitivity)
-    return sensitivity
+    s = np.sqrt(np.sum(np.square(ddvdx), 1)).reshape((-1, 1))
+    # print('Sensitivity = %f' % s)
+    return s
 
 
-def get_ddvdx(args):
+def get_ddvdx(args: list) -> np.ndarray:
     """
     Calculate partial derivative of delta v with respect to state for ith element of state
     """
@@ -251,7 +258,7 @@ def get_ddvdx(args):
     return du / dx
 
 
-def evaluate_perturbed_trajectory(x_perturbed, m, i):
+def evaluate_perturbed_trajectory(x_perturbed: np.ndarray, m: np.ndarray, i: int) -> np.ndarray:
     # Calculate the first point from which to propagate
     first_point = i // (n_dim * 2)
 
@@ -281,7 +288,7 @@ def evaluate_perturbed_trajectory(x_perturbed, m, i):
     ti = np.linspace(t0, tf, num_nodes)
     ti /= tu
     ti = ti[first_point:]
-    y, miss_ind = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu, mu, fu, Isp, tol)
+    y, miss_ind = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu, mu, fu, Isp)
 
     # Need to make a state matrix with mass
     if first_point > 0:
@@ -301,7 +308,8 @@ def evaluate_perturbed_trajectory(x_perturbed, m, i):
     return thrust_vec_inertial.ravel()
 
 
-def save_traj(t, x, m, u, traj_fname='traj_data_desensitized.hdf5'):
+def save_traj(t: np.ndarray, x: np.ndarray, m: np.ndarray, u: np.ndarray,
+              traj_fname: str = 'traj_data_desensitized.hdf5'):
     x = np.reshape(x, (len(t), -1))
     x = np.hstack((x, m))
     with h5py.File(traj_fname, 'w') as f:
@@ -349,7 +357,7 @@ def desensitize():
     save_traj(t, x, m, u)
 
     # Calculate new sensitivity
-    s = sensitivity(t, x, m, u)
+    # s = sensitivity(t, x, m, u)
     # print('New sensitivity: %f' % s)
 
     return x, delta_x, dsdx

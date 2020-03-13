@@ -50,24 +50,22 @@ class Neurocontroller():
             self.scales_out = scales_out
             self.was_init_from_neat_net = False
 
-
     @staticmethod
-    def activation(W, b, x):
+    def activation(W: np.ndarray, b: np.ndarray, x: np.ndarray) -> np.ndarray:
         return np.tanh(np.sum((np.matmul(W, x), b), axis=0))
 
-    def scaleInputs(self, inputs):
+    def scaleInputs(self, inputs: np.ndarray) -> np.ndarray:
         inputs_scaled = inputs / scales_in
         return inputs_scaled
 
-    def scaleOutputs(self, outputs):
+    def scaleOutputs(self, outputs: np.ndarray) -> np.ndarray:
         so = out_node_scales  # old scales
         sn = scales_out       # new scales
         outputs_scaled = np.array([(out - so[i, 0]) / (so[i, 1] - so[i, 0]) * (sn[i, 1] - sn[i, 0]) + sn[i, 0]
                                    for i, out in enumerate(outputs[0])])
         return outputs_scaled
 
-
-    def getThrustVec(self, state):
+    def getThrustVec(self, state: np.ndarray) -> np.ndarray:
         state_coe = inertial_to_keplerian(state)
         state_scaled = self.scaleInputs(state_coe)
         out = self.forwardPass(state_scaled)
@@ -78,13 +76,11 @@ class Neurocontroller():
         thrust = np.matmul(dcm, thrust)
         return thrust
 
-
     @staticmethod
-    def get_angle(angle_choice):
+    def get_angle(angle_choice: np.ndarray) -> float:
         return angle_choices[angle_choice]
 
-
-    def get_thrust_vec_neat(self, state):
+    def get_thrust_vec_neat(self, state: np.ndarray) -> np.ndarray:
         _state = state.copy()
         # Convert the state to the desired frame with the appropriate number of dimensions (starts in inertial frame)
         if n_dim == 2:
@@ -123,8 +119,7 @@ class Neurocontroller():
             # See 532 Notes, Page JS_3Dex 2-3 for reference on VNC frame
         return thrust
 
-
-    def forwardPass(self, state):
+    def forwardPass(self, state: np.ndarray) -> np.ndarray:
         a = [[] for _ in range(self.n_layers)]
         for layer in range(self.n_layers):
             if layer == 0:
@@ -134,8 +129,7 @@ class Neurocontroller():
             a[layer] = self.activation(self.W[layer], self.b[layer], x_in)
         return a[-1].transpose()
 
-
-    def setWeights(self, Wb_new):
+    def setWeights(self, Wb_new: np.ndarray):
         W_new = [[] for _ in range(self.n_layers)]
         b_new = [[] for _ in range(self.n_layers)]
         assert(self.n_layers == 2) # only supports 2 layers currently
@@ -146,7 +140,6 @@ class Neurocontroller():
         for i, w in enumerate(self.W):
             self.W[i] = W_new[i]
             self.b[i] = b_new[i]
-
 
     @staticmethod
     def init_from_neat_net(net, scales_in, scales_out):

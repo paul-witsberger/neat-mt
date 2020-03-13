@@ -1,12 +1,14 @@
 import numpy as np
+from constants import au_to_km
 import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-from constants import au_to_km
+
 
 matplotlib.rcParams['font.sans-serif'] = "Times New Roman"
 matplotlib.rcParams['font.family'] = "serif"
+assert Axes3D
 
 # Plot colors
 initial_color = 'grey'
@@ -33,16 +35,20 @@ sun_color = 'orange'
 plot_points = True
 
 
-def set_axes_radius(ax, origin, radius):
+def set_axes_radius(ax, origin: np.ndarray, radius: float):
     ax.set_xlim3d([origin[0] - radius, origin[0] + radius])
     ax.set_ylim3d([origin[1] - radius, origin[1] + radius])
     ax.set_zlim3d([origin[2] - radius, origin[2] + radius])
 
+
 def set_axes_equal(ax):
-    '''Make axes of 3D plot have equal scale so that spheres appear as spheres,
+    """
+    Make axes of 3D plot have equal scale so that spheres appear as spheres,
     cubes as cubes, etc..  This is one possible solution to Matplotlib's
     ax.set_aspect('equal') and ax.axis('equal') not working for 3D.
-    '''
+    :param ax:
+    :return:
+    """
 
     limits = np.array([
         ax.get_xlim3d(),
@@ -54,7 +60,8 @@ def set_axes_equal(ax):
     radius = 0.5 * np.max(np.abs(limits[:, 1] - limits[:, 0]))
     set_axes_radius(ax, origin, radius)
 
-def plotTraj3D(y):
+
+def plotTraj3D(y: np.ndarray):
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
     ax.plot3D(y[:, 0], y[:, 1], y[:, 2])
@@ -66,8 +73,10 @@ def plotTraj3D(y):
     set_axes_equal(ax)
     plt.show()
 
-def plotTraj2D(yout, show_plot=True, save_plot=False, fname='tmp_traj_plot', title='', fig_ax=None, label='',
-               start=False, end=False, show_legend=True, scale_distance=True):
+
+def plotTraj2D(yout: np.ndarray, show_plot: bool = True, save_plot: bool = False, fname: str = 'tmp_traj_plot',
+               title: str = '', fig_ax=None, label: str = '', start: bool = False, end: bool = False,
+               show_legend: bool = True, scale_distance: bool = True):
     """
     Used for the transfer trajectory.
     :param yout:
@@ -79,6 +88,8 @@ def plotTraj2D(yout, show_plot=True, save_plot=False, fname='tmp_traj_plot', tit
     :param label:
     :param start:
     :param end:
+    :param show_legend:
+    :param scale_distance:
     :return:
     """
     if fig_ax is None:
@@ -113,8 +124,10 @@ def plotTraj2D(yout, show_plot=True, save_plot=False, fname='tmp_traj_plot', tit
         fig.savefig(fname, dpi=600)
     return fig, ax
 
-def plotTraj2DStruct(yout, show_plot=True, save_plot=False, fname='tmp_traj_plot', title='', fig_ax=None, label='',
-                     start=False, end=False, show_legend=True, scale_distance=True):
+
+def plotTraj2DStruct(yout, show_plot: bool = True, save_plot: bool = False, fname: str = 'tmp_traj_plot',
+                     title: str = '', fig_ax=None, label: str = '', end: bool = False, show_legend: bool = True,
+                     scale_distance: bool = True):
     """
     Used for the initial and final orbits.
     :param yout:
@@ -124,8 +137,9 @@ def plotTraj2DStruct(yout, show_plot=True, save_plot=False, fname='tmp_traj_plot
     :param title:
     :param fig_ax:
     :param label:
-    :param start:
     :param end:
+    :param show_legend:
+    :param scale_distance:
     :return:
     """
     if fig_ax is None:
@@ -135,13 +149,16 @@ def plotTraj2DStruct(yout, show_plot=True, save_plot=False, fname='tmp_traj_plot
     else:
         fig, ax = fig_ax
     if label == 'Final':
-        ax.plot(yout.y[0] / au_to_km, yout.y[1] / au_to_km, label=label, zorder=5, c=final_color, linewidth=final_weight, linestyle=final_style)
+        ax.plot(yout.y[0] / au_to_km, yout.y[1] / au_to_km, label=label, zorder=5, c=final_color,
+                linewidth=final_weight, linestyle=final_style)
     elif label == 'Initial':
-        ax.plot(yout.y[0] / au_to_km, yout.y[1] / au_to_km, label=label, zorder=5, c=initial_color, linewidth=initial_weight, linestyle=initial_style)
-    else: # Target
-        ax.plot(yout.y[0] / au_to_km, yout.y[1] / au_to_km, label=label, zorder=5, c=target_color, linewidth=target_weight, linestyle=target_style)
-    if end and plot_points: # Target
-        ax.scatter(yout.y[0,-1] / au_to_km, yout.y[1,-1] / au_to_km, c=target_point, label=label, s=point_size)
+        ax.plot(yout.y[0] / au_to_km, yout.y[1] / au_to_km, label=label, zorder=5, c=initial_color,
+                linewidth=initial_weight, linestyle=initial_style)
+    else:  # Target
+        ax.plot(yout.y[0] / au_to_km, yout.y[1] / au_to_km, label=label, zorder=5, c=target_color,
+                linewidth=target_weight, linestyle=target_style)
+    if end and plot_points:  # Target
+        ax.scatter(yout.y[0, -1] / au_to_km, yout.y[1, -1] / au_to_km, c=target_point, label=label, s=point_size)
 
     if scale_distance:
         ax.set_xlabel('X [AU]', fontname='Times New Roman')
@@ -160,7 +177,9 @@ def plotTraj2DStruct(yout, show_plot=True, save_plot=False, fname='tmp_traj_plot
         fig.savefig(fname, dpi=600)
     return fig, ax
 
-def plotMassHistory(t, m, show_plot=False, save_plot=True, fname='tmp_mass_hist', mt_ind=None):
+
+def plotMassHistory(t: np.ndarray, m: np.ndarray, show_plot: bool = False, save_plot: bool = True,
+                    fname: str = 'tmp_mass_hist', mt_ind: np.ndarray = None):
     fig = plt.figure()
     ax = fig.add_subplot(111)
     plt.grid(True)
@@ -176,7 +195,9 @@ def plotMassHistory(t, m, show_plot=False, save_plot=True, fname='tmp_mass_hist'
     if save_plot:
         fig.savefig(fname, dpi=300)
 
-def plotThrustHistory(t, thrust_vec, T_max_kN, show_plot=False, save_plot=True, fname='tmp_thrust_hist', mt_ind=None):
+
+def plotThrustHistory(t: np.ndarray, thrust_vec: np.ndarray, T_max_kN: float, show_plot: bool = False,
+                      save_plot: bool = True, fname: str = 'tmp_thrust_hist', mt_ind: np.ndarray = None):
     fig = plt.figure()
     ax1 = fig.add_subplot(211)
     ax2 = fig.add_subplot(212)

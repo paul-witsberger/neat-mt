@@ -1,5 +1,6 @@
 # Run the GA for:
-# - first, one set of boundary conditions; each controller is used on several trajectories that each have a random single outage
+# - first, one set of boundary conditions; each controller is used on several trajectories that each have a random
+#       single outage
 # - next, each controller is used on several trajectories that have independent boundary conditions and random outages
 # - next, include multiple outages
 
@@ -8,12 +9,11 @@ import boost_tbp
 import neatfast as neat
 from traj_config import *
 from orbit_util import *
-from copy import copy
 import os
 import pickle
 
 
-def eval_traj_neat(genome, config):
+def eval_traj_neat(genome: neat.genome.DefaultGenome, config: neat.config.Config) -> float:
     """
     Evaluates a neural network's ability as a controller for the defined problem, using a NEAT-style network.
     """
@@ -90,7 +90,7 @@ def eval_traj_neat(genome, config):
     return -f
 
 
-def make_new_bcs(true_final_f=true_final_f):
+def make_new_bcs(true_final_f: bool = true_final_f) -> (np.ndarray, np.ndarray):
     while True:
         a0 = np.random.rand() * (a0_max - a0_min) + a0_min
         af = np.random.rand() * (af_max - af_min) + af_min
@@ -126,52 +126,58 @@ def make_new_bcs(true_final_f=true_final_f):
     return y0, yf
 
 
-def evalTraj(W, params):
-    '''
+def evalTraj(W: np.ndarray, params: list) -> float:
+    """
     Evaluates a NN that was trained with a genetic algorithm.
-    '''
-    # Extract parameters
-    n_in, n_hid, n_out, scales_in, scales_out, t0, tf, y0, yf, m_dry, T_max_kN, tol, num_nodes, num_cases, num_outages = params
-    # Construct NN
-    nc = Neurocontroller(scales_in, scales_out, n_in, n_hid, n_out)
-    nc.setWeights(W)
-    thrust_fcn = nc.getThrustVec
-    # Define time vector
-    # ti = np.linspace(t0, tf, num_nodes)
-    ti = np.power(np.linspace(0, 1, num_nodes), 3 / 2) * (tf - t0) + t0
-    # Define scaling parameters
-    du = 6371.0
-    tu = np.sqrt(du**3 / gm)
-    mu = y0[-1]
-    fu = mu * du / tu / tu
-    # Initialize score vector
-    f = np.ones(num_cases) * np.inf
-    for i in range(num_cases):
-        # Integrate trajectory
-        y, miss_ind = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu, mu, fu)
-        # Check if integration was stopped early
-        if len(y.shape) == 0:
-            if y == -1:
-                return 1000
-            else:
-                frac = y / len(ti)
-                return (1 - frac) * 500 + 500
-        # Create logical list for indices of 2D components
-        # ind_2d = [True, True, False, True, True, False, False]
-        # Get final state
-        yf_actual = y[-1, ind_dim]
-        yf_target = yf[ind_dim[:-1]]
-        # Calculate ratio of initial mass to final mass
-        m_ratio = y0[-1] / y[-1, -1]
-        f[i] = traj_fit_func(yf_actual, yf_target, m_ratio)
-    f = np.mean(f)
-    if f < 10:
-        blah = 0
-    return f
+    :param W:
+    :param params:
+    :return:
+    """
+    raise NotImplementedError
+    # # Extract parameters
+    # n_in, n_hid, n_out, scales_in, scales_out, t0, tf, y0, yf, m_dry, T_max_kN, tol, num_nodes, num_cases,
+    # num_outages = params
+    # # Construct NN
+    # nc = Neurocontroller(scales_in, scales_out, n_in, n_hid, n_out)
+    # nc.setWeights(W)
+    # thrust_fcn = nc.getThrustVec
+    # # Define time vector
+    # # ti = np.linspace(t0, tf, num_nodes)
+    # ti = np.power(np.linspace(0, 1, num_nodes), 3 / 2) * (tf - t0) + t0
+    # # Define scaling parameters
+    # du = 6371.0
+    # tu = np.sqrt(du**3 / gm)
+    # mu = y0[-1]
+    # fu = mu * du / tu / tu
+    # # Initialize score vector
+    # f = np.ones(num_cases) * np.inf
+    # for i in range(num_cases):
+    #     # Integrate trajectory
+    #     y, miss_ind = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu, mu, fu)
+    #     # Check if integration was stopped early
+    #     if len(y.shape) == 0:
+    #         if y == -1:
+    #             return 1000
+    #         else:
+    #             frac = y / len(ti)
+    #             return (1 - frac) * 500 + 500
+    #     # Create logical list for indices of 2D components
+    #     # ind_2d = [True, True, False, True, True, False, False]
+    #     # Get final state
+    #     yf_actual = y[-1, ind_dim]
+    #     yf_target = yf[ind_dim[:-1]]
+    #     # Calculate ratio of initial mass to final mass
+    #     m_ratio = y0[-1] / y[-1, -1]
+    #     f[i] = traj_fit_func(yf_actual, yf_target, m_ratio)
+    # f = np.mean(f)
+    # if f < 10:
+    #     blah = 0
+    # return f
 
 
 @njit
-def traj_fit_func(y, yf, y0, m_ratio, t_ratio=0., output_errors=False):
+def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float, t_ratio: float = 0.) \
+        -> (float, float, float):
     """
     Calculates a scalar fitness value for a trajectory based on weighted sum of final state error plus the final mass.
     """
@@ -197,7 +203,7 @@ def traj_fit_func(y, yf, y0, m_ratio, t_ratio=0., output_errors=False):
     dr_tol_close = 0.00385 * au_to_km / a0_max
     dr_tol_far = 0.3 * au_to_km / a0_max
     yf_mag = np.linalg.norm(yf[n_dim:])
-    dv_tol = 0.241 / yf_mag
+    # dv_tol = 0.241 / yf_mag
     dr = np.linalg.norm(yf[:n_dim] - y[:n_dim]) / a0_max
     dv = np.linalg.norm(yf[n_dim:] - y[n_dim:]) / yf_mag
     drp = np.abs(rp2 - rp1) / a0_min
@@ -260,8 +266,11 @@ def traj_fit_func(y, yf, y0, m_ratio, t_ratio=0., output_errors=False):
     #     return f
 
 
-def integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu, mu, fu, Isp,
-                                 save_full_traj=False, fixed_step=False, missed_thrust_allowed=missed_thrust_allowed):
+def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat, y0: np.ndarray, ti: np.ndarray,
+                                 yf: np.ndarray, m_dry: float, T_max_kN: float, du: float, tu: float, mu: float,
+                                 fu: float, Isp: float, save_full_traj: bool = False, fixed_step: bool = False,
+                                 missed_thrust_allowed: bool = missed_thrust_allowed) -> \
+                                (np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray):
     """
     Integrate a trajectory using boost_2bp with each leg having fixed thrust. Updates the thrust vector between each leg
     """
@@ -401,7 +410,7 @@ def integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu
     return y, miss_ind, full_traj, dv1, dv2
 
 
-def calculate_missed_thrust_events(ti):
+def calculate_missed_thrust_events(ti: np.ndarray) -> np.ndarray:
     """
     Return indices of random missed thrust events that occur according to the Weibull distributions given by Imken et al
     :param ti:
@@ -423,11 +432,11 @@ def calculate_missed_thrust_events(ti):
         t += time_between_events
         if t < ti[-1]:  # check if the next event happens before the end of the time of flight
             # while True:
-                recovery_duration = np.random.weibull(k_rd) * lambda_rd * day_to_sec  # calculate the recovery duration
-                recovery_duration += (np.random.rand() * max_discovery_delay_days * day_to_sec) + \
-                                     (op_recovery_days * day_to_sec)  # account for discovery delay and operational recovery
-                miss_indices.append(np.arange(find_nearest(ti, t), find_nearest(ti, t + recovery_duration)))
-                t += recovery_duration
+            recovery_duration = np.random.weibull(k_rd) * lambda_rd * day_to_sec  # calculate the recovery duration
+            recovery_duration += (np.random.rand() * max_discovery_delay_days * day_to_sec) + \
+                                 (op_recovery_days * day_to_sec)  # discovery delay and operational recovery
+            miss_indices.append(np.arange(find_nearest(ti, t), find_nearest(ti, t + recovery_duration)))
+            t += recovery_duration
         if t >= ti[-1]:
             if len(miss_indices) > 0:
                 return np.hstack(miss_indices).astype(int)
@@ -435,7 +444,7 @@ def calculate_missed_thrust_events(ti):
                 return np.array([]).astype(int)
 
 
-def find_nearest(array, value):
+def find_nearest(array: np.ndarray, value: float) -> int:
     """
     Helper function that finds the closest index of an array to a specified value
     :param array:
@@ -446,7 +455,7 @@ def find_nearest(array, value):
     return idx
 
 
-def calculate_prop_margins(genome, config):
+def calculate_prop_margins(genome: neat.genome.DefaultGenome, config: neat.config.Config) -> np.ndarray:
     """
     Evaluates a neural network's ability as a controller for the defined problem, using a NEAT-style network.
     :param genome:
