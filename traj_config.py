@@ -40,9 +40,10 @@ elliptical_final = True if ef_max > 0 else False
 m_dry = 10000
 m_prop = 3000
 m0 = m_dry + m_prop
+fixed_step = True
 variable_power = False
 if variable_power:
-    power_min, power_max = 3.4, 12.5 # kW
+    power_min, power_max = 3.4, 12.5  # kW
     solar_array_m2 = 1  # m^2
     power_reference = solar_constant * solar_array_m2  # kW, power available at 1 AU
     thrust_power_coef = np.array([-363.67, 225.49, -21.475, 0.7943, 0]) / 1000
@@ -50,9 +51,9 @@ if variable_power:
     T_max_kN = thrust_power_coef * np.array([1, power_max, power_max ** 2, power_max ** 3, power_max ** 4]) * 1e-3
     Isp = isp_power_coef * np.array([1, power_max, power_max ** 2, power_max ** 3, power_max ** 4])
 else:
-    T_max_kN = 1.2 * 1e-3 # 2 x HERMeS engines with 37.5 kW  # 21.8 mg/s for one thruster
+    T_max_kN = 1.2 * 1e-3  # 2 x HERMeS engines with 37.5 kW  # 21.8 mg/s for one thruster
     Isp = 2780
-Isp_chemical = 370 # for the final correction burns
+Isp_chemical = 370  # for the final correction burns
 
 # Define time of flight
 t0 = 0.
@@ -128,4 +129,4 @@ missed_thrust_rd_factor = 1.
 input_indices = None
 
 # Specify if a Lambert arc should be computed to match the final state
-do_terminal_lambert_arc = False
+do_terminal_lambert_arc = True

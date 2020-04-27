@@ -6,7 +6,7 @@ from copy import copy
 
 
 @njit
-def hohmann_circ(a1: float, a2: float, gm: float=gm) -> float:
+def hohmann_circ(a1: float, a2: float, gm: float = gm) -> float:
     """
     Returns the delta V to transfer between two circular orbits using a Hohmann transfer
     :param a1:
@@ -26,7 +26,7 @@ def hohmann_circ(a1: float, a2: float, gm: float=gm) -> float:
 
 
 @njit
-def hohmann_rp_ra(rp1: float, vp1: float, ra2: float, va2: float, gm: float=gm) -> float:
+def hohmann_rp_ra(rp1: float, vp1: float, ra2: float, va2: float, gm: float = gm) -> float:
     """
     Returns the delta V to transfer between two co-linear elliptical orbits using a Hohmann transfer
     :param rp1:
@@ -46,7 +46,7 @@ def hohmann_rp_ra(rp1: float, vp1: float, ra2: float, va2: float, gm: float=gm) 
 
 
 @njit
-def coe4_from_rv(r_vec: np.ndarray, v_vec: np.ndarray, gm: float=gm) -> np.ndarray:
+def coe4_from_rv(r_vec: np.ndarray, v_vec: np.ndarray, gm: float = gm) -> np.ndarray:
     r = np.linalg.norm(r_vec)
     v = np.linalg.norm(v_vec)
     # Get a from energy
@@ -73,7 +73,14 @@ def coe4_from_rv(r_vec: np.ndarray, v_vec: np.ndarray, gm: float=gm) -> np.ndarr
 
 
 @njit
-def period_from_inertial(state: np.ndarray, gm: float=gm, max_time_sec: float=10*year_to_sec) -> float:
+def period_from_inertial(state: np.ndarray, gm: float = gm, max_time_sec: float = 10 * year_to_sec) -> float:
+    """
+    Computes the period of an orbit given its 3D state vector.
+    :param state:
+    :param gm:
+    :param max_time_sec:
+    :return:
+    """
     a, e, i, w, om, f = inertial_to_keplerian_3d(state, gm=gm)
     if e < 1:
         per = 2 * np.pi * np.sqrt((a ** 3) / gm)
@@ -83,19 +90,20 @@ def period_from_inertial(state: np.ndarray, gm: float=gm, max_time_sec: float=10
     return per
 
 
-def inertial_to_local(state: np.ndarray, has_extra: bool=True) -> np.ndarray:
+@njit
+def inertial_to_local(state: np.ndarray, has_extra: bool = True) -> np.ndarray:
+    """
+    Convert two 2D state vectors from inertial frame to spacecraft frame, and pass back extra values.
+    :param state:
+    :param has_extra:
+    :return:
+    """
     s1i = state[:4]
     s2i = state[4:8]
     if has_extra:
         extra = state[8:]
-    r1 = np.sqrt(s1i[0] * s1i[0] + s1i[1] * s1i[1])
-    r2 = np.sqrt(s2i[0] * s2i[0] + s2i[1] * s2i[1])
-    v1 = np.sqrt(s1i[2] * s1i[2] + s1i[3] * s1i[3])
-    v2 = np.sqrt(s2i[2] * s2i[2] + s2i[3] * s2i[3])
-    th1 = np.arctan2(s1i[1], s1i[0])
-    th2 = np.arctan2(s2i[1], s2i[0])
-    al1 = np.arctan2(s1i[3], s1i[2])
-    al2 = np.arctan2(s2i[3], s2i[2])
+    r1, v1, th1, al1 = inertial_to_keplerian_2d(s1i)
+    r2, v2, th2, al2 = inertial_to_keplerian_2d(s2i)
     if has_extra:
         return np.array([r1, r2, v1, v2, th1, th2, al1, al2, *extra])
     else:
@@ -103,7 +111,14 @@ def inertial_to_local(state: np.ndarray, has_extra: bool=True) -> np.ndarray:
 
 
 @njit
-def inertial_to_keplerian(state: np.ndarray, gm: float=gm) -> np.ndarray:
+def inertial_to_keplerian(state: np.ndarray, gm: float = gm) -> np.ndarray:
+    """
+    Convert two 2D state vectors plus mass and time from inertial to Keplerian frame. Specific implementation
+    for frame conversions for use by the neural network.
+    :param state:
+    :param gm:
+    :return:
+    """
     r1, r2, v1, v2, th1, th2, al1, al2, mr, tr = inertial_to_local(state)
     eps1 = v1 ** 2 / 2 - gm / r1
     eps2 = v2 ** 2 / 2 - gm / r2
@@ -136,38 +151,29 @@ def inertial_to_keplerian(state: np.ndarray, gm: float=gm) -> np.ndarray:
     return np.array([a1, a2, e1, e2, w1, w2, ta1, ta2, mr, tr])
 
 
-@njit
+# @njit
 def inertial_to_local_2d(state: np.ndarray) -> np.ndarray:
+    """
+    Convert a 2D state vector from inertial to (r, theta) frame.
+    :param state:
+    :return:
+    """
     x, y, vx, vy = state
-    r = np.sqrt(x * x + y * y)
-    v = np.sqrt(vx * vx + vy * vy)
+    r = (x * x + y * y) ** 0.5
+    v = (vx * vx + vy * vy) ** 0.5
     th = np.arctan2(y, x)
     al = np.arctan2(vy, vx)
     return np.array([r, v, th, al])
 
 
-@njit
-def inertial_to_keplerian_2d_old(state: np.ndarray, gm: float=gm) -> np.ndarray:
-    r, v, th, al = inertial_to_local_2d(state)
-    eps = v ** 2 / 2 - gm / r
-    a = - gm / (2 * eps)
-    fpa = -fix_angle(al - th - np.pi / 2)
-    h = r * v * np.cos(fpa)
-    p = h ** 2 / gm
-    e = np.sqrt(1 - np.min((p / a, 1.0)))
-    if e < 1e-6:
-        arg = np.sign(p / r - 1)
-    else:
-        arg = (p / r - 1) / e
-        if np.abs(arg) > 1:
-            arg = np.sign(arg)
-    ta = np.arccos(arg) * np.sign(fpa+1e-8)
-    w = fix_angle(th - ta)
-    return np.array([a, e, w, ta])
-
-
-@njit
-def inertial_to_keplerian_2d(state: np.ndarray, gm: float=gm) -> np.ndarray:
+# @njit
+def inertial_to_keplerian_2d(state: np.ndarray, gm: float = gm) -> np.ndarray:
+    """
+    Convert a 2D state vector from inertial to Keplerian
+    :param state:
+    :param gm:
+    :return:
+    """
     r, v, th, al = inertial_to_local_2d(state)
     eps = v ** 2 / 2 - gm / r
     a = - gm / (2 * eps)
@@ -183,13 +189,19 @@ def inertial_to_keplerian_2d(state: np.ndarray, gm: float=gm) -> np.ndarray:
         arg = (p / r - 1) / e
         if np.abs(arg) > 1:
             arg = np.sign(arg)
-        ta = np.arccos(arg) * np.sign(fpa+1e-8)
+        ta = np.arccos(arg) * np.sign(fpa + 1e-8)
         w = fix_angle(th - ta)
     return np.array([a, e, w, ta])
 
 
 @njit
 def cross(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+    """
+    Compute the cross product of two vectors.
+    :param left:
+    :param right:
+    :return:
+    """
     x = ((left[1] * right[2]) - (left[2] * right[1]))
     y = ((left[2] * right[0]) - (left[0] * right[2]))
     z = ((left[0] * right[1]) - (left[1] * right[0]))
@@ -197,7 +209,13 @@ def cross(left: np.ndarray, right: np.ndarray) -> np.ndarray:
 
 
 @njit
-def inertial_to_keplerian_3d(state: np.ndarray, gm: float=gm) -> np.ndarray:
+def inertial_to_keplerian_3d(state: np.ndarray, gm: float = gm) -> np.ndarray:
+    """
+    Convert a 3D state vector from inertial to Keplerian
+    :param state:
+    :param gm:
+    :return:
+    """
     r_vec, v_vec = state[:3], state[3:]
     tol = 1e-8
     r = np.linalg.norm(r_vec)
@@ -269,17 +287,29 @@ def inertial_to_keplerian_3d(state: np.ndarray, gm: float=gm) -> np.ndarray:
     return np.array([a, e, i, w, om, f])
 
 
-# @njit
-def keplerian_to_perifocal_3d(state: np.ndarray, gm: float=gm) -> np.ndarray:
+@njit
+def keplerian_to_perifocal_3d(state: np.ndarray, gm: float = gm) -> np.ndarray:
+    """
+    Convert a 3D state vector from Keplerian to perifocal
+    :param state:
+    :param gm:
+    :return:
+    """
     a, e, i, w, om, f = state
     p = a * (1 - e ** 2)
-    r_p = np.hstack((p * np.cos(f) / (1 + e * np.cos(f)), p * np.sin(f) / (1 + e * np.cos(f)), 0.))
-    v_p = np.hstack((-np.sqrt(gm / p) * np.sin(f), np.sqrt(gm / p) * (e + np.cos(f)), 0.))
-    return np.hstack((r_p, v_p))
+    r_p = np.array([p * np.cos(f) / (1 + e * np.cos(f)), p * np.sin(f) / (1 + e * np.cos(f)), 0.])
+    v_p = np.array([-np.sqrt(gm / p) * np.sin(f), np.sqrt(gm / p) * (e + np.cos(f)), 0.])
+    return np.array((r_p, v_p)).ravel()
 
 
-# @njit
-def keplerian_to_inertial_3d(state: np.ndarray, gm: float=gm) -> np.ndarray:
+@njit
+def keplerian_to_inertial_3d(state: np.ndarray, gm: float = gm) -> np.ndarray:
+    """
+    Convert a 3D state vector from Keplerian to inertial
+    :param state:
+    :param gm:
+    :return:
+    """
     a, e, i, w, om, f = state
     state_peri = keplerian_to_perifocal_3d(state, gm=gm)
     r_p, v_p = state_peri[:3], state_peri[3:]
@@ -314,7 +344,13 @@ def keplerian_to_inertial_3d(state: np.ndarray, gm: float=gm) -> np.ndarray:
 
 
 @njit
-def keplerian_to_perifocal_2d(state: np.ndarray, gm: float=gm) -> np.ndarray:
+def keplerian_to_perifocal_2d(state: np.ndarray, gm: float = gm) -> np.ndarray:
+    """
+    Convert a 2D state vector from Keplerian to perifocal
+    :param state:
+    :param gm:
+    :return:
+    """
     a, e, w, f = state
     p = a * (1 - e ** 2)
     r_p = np.hstack((np.array(p * np.cos(f) / (1 + e * np.cos(f))), np.array(p * np.sin(f) / (1 + e * np.cos(f)))))
@@ -323,7 +359,13 @@ def keplerian_to_perifocal_2d(state: np.ndarray, gm: float=gm) -> np.ndarray:
 
 
 @njit
-def keplerian_to_inertial_2d(state: np.ndarray, gm: float=gm) -> np.ndarray:
+def keplerian_to_inertial_2d(state: np.ndarray, gm: float = gm) -> np.ndarray:
+    """
+    Convert a 2D state vector from Keplerian to inertial
+    :param state:
+    :param gm:
+    :return:
+    """
     # Convert to perifocal frame
     a, e, w, f = state
     state_peri = keplerian_to_perifocal_2d(state, gm=gm)
@@ -351,6 +393,11 @@ def keplerian_to_inertial_2d(state: np.ndarray, gm: float=gm) -> np.ndarray:
 
 @njit
 def keplerian_to_mee_3d(state: np.ndarray) -> np.ndarray:
+    """
+    Convert a 3D state vector from Keplerian to Modified Equinoctial Elements
+    :param state:
+    :return:
+    """
     a, e, i, w, om, ta = state
     # Check that values are acceptable
     assert (a > 0 and e < 1) or (a < 0 and e > 1) or (e == 1), "semimajor axis and eccentricity do not agree"
@@ -371,6 +418,11 @@ def keplerian_to_mee_3d(state: np.ndarray) -> np.ndarray:
 
 @njit
 def mee_to_keplerian_3d(state: np.ndarray) -> np.ndarray:
+    """
+    Convert a 3D state vector from Modified Equinoctial Elements to Keplerian
+    :param state:
+    :return:
+    """
     p, f, g, h, k, L = state
     # Convert to Keplerian
     om = np.arctan2(k, h)
@@ -388,17 +440,30 @@ def mee_to_keplerian_3d(state: np.ndarray) -> np.ndarray:
 
 @njit
 def rotate_vnc_to_inertial_3d(vec: np.ndarray, state: np.ndarray) -> np.ndarray:
+    """
+    Rotates the current velocity vector to an inertial frame.
+    :param vec:
+    :param state:
+    :return:
+    """
     r_vec, v_vec = state[:3], state[3:6]    # radius and velocity vectors
     v_hat = v_vec / np.linalg.norm(v_vec)   # velocity unit vector
-    h_vec = cross(r_vec, v_vec)          # angular momentum vector
+    h_vec = cross(r_vec, v_vec)             # angular momentum vector
     n_hat = h_vec / np.linalg.norm(h_vec)   # angular momentum unit vector; also, normal unit vector
-    c_hat = cross(v_hat, n_hat)          # co-normal unit vector
+    c_hat = cross(v_hat, n_hat)             # co-normal unit vector
     dcm = np.vstack((v_hat, n_hat, c_hat))  # direction cosine matrix
     return np.matmul(dcm, vec)
 
 
 @njit
-def fix_angle(angle: float, upper_bound: float=np.pi, lower_bound: float=-np.pi) -> float:
+def fix_angle(angle: float, upper_bound: float = np.pi, lower_bound: float = -np.pi) -> float:
+    """
+    Forces an angle to be within a set 2*pi radian window.
+    :param angle:
+    :param upper_bound:
+    :param lower_bound:
+    :return:
+    """
     # Check that bounds are properly defined
     assert upper_bound - lower_bound == 2 * np.pi
     assert not np.isnan(angle)
@@ -409,7 +474,14 @@ def fix_angle(angle: float, upper_bound: float=np.pi, lower_bound: float=-np.pi)
             return angle
 
 
-def min_energy_lambert(r0: np.ndarray, r1: np.ndarray, gm: float=gm) -> (np.ndarray, np.ndarray, float):
+def min_energy_lambert(r0: np.ndarray, r1: np.ndarray, gm: float = gm) -> (np.ndarray, np.ndarray, float):
+    """
+    Computes the minimum-energy transfer between two points.
+    :param r0:
+    :param r1:
+    :param gm:
+    :return:
+    """
     assert r0[2] == 0 and r1[2] == 0
     # Get magnitude of position vectors
     r0mag = np.linalg.norm(r0)
@@ -481,6 +553,11 @@ def min_energy_lambert(r0: np.ndarray, r1: np.ndarray, gm: float=gm) -> (np.ndar
 
 @njit
 def c2(psi: float) -> float:
+    """
+    Helper function for vallado().
+    :param psi:
+    :return:
+    """
     eps = 1.0
     if psi > eps:
         res = (1 - np.cos(np.sqrt(psi))) / psi
@@ -500,6 +577,11 @@ def c2(psi: float) -> float:
 
 @njit
 def c3(psi: float) -> float:
+    """
+    Helper function for vallado().
+    :param psi:
+    :return:
+    """
     eps = 1.0
     if psi > eps:
         res = (np.sqrt(psi) - np.sin(np.sqrt(psi))) / (psi * np.sqrt(psi))
@@ -519,6 +601,17 @@ def c3(psi: float) -> float:
 @njit
 def vallado(k: float, r0: np.ndarray, r: np.ndarray, tof: float, short: bool, numiter: int, rtol: float) \
         -> (np.ndarray, np.ndarray):
+    """
+    Computes a Lambert solution based on the implementation in Vallado.
+    :param k:
+    :param r0:
+    :param r:
+    :param tof:
+    :param short:
+    :param numiter:
+    :param rtol:
+    :return:
+    """
     if short:
         t_m = +1
     else:
@@ -583,8 +676,19 @@ def vallado(k: float, r0: np.ndarray, r: np.ndarray, tof: float, short: bool, nu
     return v0, v
 
 
-def lambert_min_dv(k: float, r0: np.ndarray, v0: np.ndarray, rf: np.ndarray, vf: np.ndarray, short: bool=True,
-                   do_print: bool=False) -> (float, np.ndarray, np.ndarray):
+def lambert_min_dv(k: float, r0: np.ndarray, v0: np.ndarray, rf: np.ndarray, vf: np.ndarray, short: bool = True,
+                   do_print: bool = False) -> (np.ndarray, np.ndarray, float):
+    """
+    Computes the minimum delta V transfer between two states assuming a two-impulse manuever.
+    :param k:
+    :param r0:
+    :param v0:
+    :param rf:
+    :param vf:
+    :param short:
+    :param do_print:
+    :return:
+    """
     # Define parameters for search
     count = 0
     max_count = 20
@@ -682,10 +786,16 @@ def lambert_min_dv(k: float, r0: np.ndarray, v0: np.ndarray, rf: np.ndarray, vf:
 
     dv1 = best_dv[0] - v0
     dv2 = vf - best_dv[1]
-    return best_tof, dv1, dv2
+    return dv1, dv2, best_tof
 
 
 def gamma_from_r_v(r_vec: np.ndarray, v_vec: np.ndarray) -> float:
+    """
+    Computes the current flight path angle from radius and velocity vectors.
+    :param r_vec:
+    :param v_vec:
+    :return:
+    """
     r_vec = np.append(r_vec, 0) if r_vec.size == 2 else r_vec
     r_mag = mag3(r_vec)
     r_hat = r_vec / r_mag
@@ -708,31 +818,172 @@ def gamma_from_r_v(r_vec: np.ndarray, v_vec: np.ndarray) -> float:
 
 @njit
 def mag2(array: np.ndarray) -> float:
+    """
+    Computes the magnitude of a 2-dimensional array.
+    :param array:
+    :return:
+    """
     return (array[0] * array[0] + array[1] * array[1]) ** 0.5
 
 
 @njit
 def mag3(array: np.ndarray) -> float:
+    """
+    Computes the magnitude of a 3-dimensional array.
+    :param array:
+    :return:
+    """
     return (array[0] * array[0] + array[1] * array[1] + array[2] * array[2]) ** 0.5
 
 
-def min_dv_capture(r: np.ndarray, v: np.ndarray, gm: float) -> (float, float):
-    r_mag_km = mag2(r) if r.size == 2 else mag3(r)
-    v_mag_kms = mag2(v) if v.size == 2 else mag3(v)
-    v_mag_capture_kms = (2 * gm / r_mag_km) ** 0.5
-    r_periapsis_km = 3489
+def true_anomaly_from_r_v(r_vec: np.ndarray, v_vec: np.ndarray) -> float:
+    if r_vec.size == 2:
+        a, e, w, f = inertial_to_keplerian_2d(np.hstack((r_vec, v_vec)))
+    else:
+        try:
+            a, e, i, w, om, f = inertial_to_keplerian_3d(np.hstack((r_vec, v_vec)))
+        except ZeroDivisionError as e:
+            print(r_vec)
+            print(v_vec)
+            raise e
+    return f
+
+
+def time_to_periapsis_from_r_v(r_vec: np.ndarray, v_vec: np.ndarray, gm: float = gm) -> float:
+    """
+    Computes the time until the current state reaches periapsis. Assumes 2D.
+    :param r_vec:
+    :param v_vec:
+    :param gm:
+    :param r_periapsis_km:
+    :return:
+    """
+    if r_vec.size == 2:
+        a, e, w, f = inertial_to_keplerian_2d(np.hstack((r_vec, v_vec)))
+    else:
+        a, e, i, w, om, f = inertial_to_keplerian_3d(np.hstack((r_vec, v_vec)))
+
+    if e >= 0.99 and e <= 1.01:  # parabolic
+        if f > 0 and f < np.pi:  # ascending and escaping
+            print(f)
+            print(e)
+            raise RuntimeError('Spacecraft is parabolic, past periapsis, and escaping.')
+        else:
+            B = np.tan(f / 2)
+            h = mag3(cross(r_vec, v_vec))
+            p = h ** 2 / gm
+            n = 2 * (gm / p ** 3) ** 0.5
+            time_to_periapsis = - (B ** 3 / 3 + B) / n
+    elif e >= 1.01:  # hyperbolic
+        if f > 0 and f < np.pi:  # ascending and escaping
+            print(f)
+            print(e)
+            raise RuntimeError('Spacecraft is hyperbolic, past periapsis, and escaping.')
+        else:
+            H = np.arctanh(np.sin(f) * (e * e - 1) ** 0.5 / (e + np.cos(f)))
+            M = e * np.sinh(H) - H
+            time_to_periapsis = (2 * np.pi - M) * np.sqrt(gm / - a ** 3)
+    else:  # elliptical
+        # Calculate eccentric anomaly
+        E = np.arctan2(np.sin(f) * (1 - e * e) ** 0.5, e + np.cos(f))
+        E = fix_angle(E, 2 * np.pi, 0)
+        M = E - e * np.sin(E)
+        time_to_periapsis = (2 * np.pi - M) * np.sqrt(a ** 3 / gm)
+    return time_to_periapsis
+
+
+def min_dv_capture(r_sc_vec: np.ndarray, v_sc_vec: np.ndarray, r_target_vec: np.ndarray, v_target_vec: np.ndarray,
+                   gm: float, r_periapsis_km: float) -> (np.ndarray, np.ndarray, float):
+    """
+    Computes the delta V required to capture into a desired circular orbit. The assumed inputs are radius and velocity
+    vectors of the spacecraft with respect to the sun, and the radius and velocity vectors of target planet with respect
+    to the sun. Also, the gravitational parameter of the target planet and the desired final circular orbital radius.
+    Outputs the two delta V vectors, and the time of flight between them.
+    :param r_sc_vec:
+    :param v_sc_vec:
+    :param r_target_vec:
+    :param v_target_vec:
+    :param gm:
+    :param r_periapsis_km:
+    :return:
+    """
+    # Get relative vectors
+    r_vec = r_sc_vec - r_target_vec
+    v_vec = v_sc_vec - v_target_vec
+    # Compute current energy
+    r_mag_km = mag2(r_vec) if r_vec.size == 2 else mag3(r_vec)
+    v_mag_kms = mag2(v_vec) if v_vec.size == 2 else mag3(v_vec)
+    v_hat = v_vec / v_mag_kms
+    epsilon = v_mag_kms * v_mag_kms / 2 - gm / r_mag_km
+    # Define target orbit
     v_final_kms = (gm / r_periapsis_km) ** 0.5
-    v_periapsis_kms = (2 * gm / r_periapsis_km) ** 0.5
-    dv1 = v_mag_capture_kms - v_mag_kms
-    gamma = gamma_from_r_v(r, v)
-    if gamma > 0:
-        dv1 *= 2
-    dv2 = v_final_kms - v_periapsis_kms
-    return dv1, dv2
+    # Check if current state is hyperbolic
+    if epsilon > 0:
+        v_mag_capture_kms = (2 * gm / r_mag_km) ** 0.5
+        v_periapsis_kms = (2 * gm / r_periapsis_km) ** 0.5
+        dv1_mag = v_mag_capture_kms - v_mag_kms
+        gamma = gamma_from_r_v(r_vec, v_vec)
+        if gamma > 0:
+            dv1_mag -= v_mag_capture_kms
+    else:
+        dv1_mag = 0
+        v_periapsis_kms = (2 * (epsilon + gm / r_periapsis_km)) ** 0.5
+    # Compute velocity vector after the maneuvers
+    dv1_vec = v_hat * dv1_mag
+    v_transfer_vec = v_vec + dv1_vec
+    # Compute delta v to get into target orbit at periapsis
+    dv2_mag = v_final_kms - v_periapsis_kms
+    # Compute delta v vector and final velocity vector
+    true_anomaly = true_anomaly_from_r_v(r_vec, v_transfer_vec)
+    v_final_vec = rotate_vector_2d(np.array([v_final_kms, 0, 0]), true_anomaly)
+    dv2_vec = v_final_vec / v_final_kms * dv2_mag
+    # Compute time-of-flight to reach periapsis after first maneuver
+    tof = time_to_periapsis_from_r_v(r_vec, v_transfer_vec, gm)
+    return dv1_vec, dv2_vec, tof
+
+
+def rotate_vector_2d(vec: np.ndarray, angle: float) -> np.ndarray:
+    """
+    Assumes a 2D vector or a 3D vector with zero Z component. Rotates vector 'vec' in-plane by angle 'angle' ccw.
+    :param vec:
+    :param angle:
+    :return:
+    """
+    c, s = np.cos(angle), np.sin(angle)
+    if vec.size == 2:
+        dcm = np.array([[c, s], [-s, c]])
+    else:
+        dcm = np.array([[c, s, 0], [-s, c, 0], [0, 0, 1]])
+    return np.matmul(dcm, vec)
+
+
+@njit
+def change_central_body(cb1_to_sc: np.ndarray, cb2_to_cb1: np.ndarray) -> np.ndarray:
+    """
+    Change the central body by which a vector is defined.
+    :param cb1_to_sc:
+    :param cb2_to_cb1:
+    :return:
+    """
+    cb2_to_sc = cb2_to_cb1 + cb1_to_sc
+    return cb2_to_sc
 
 
 if __name__ == "__main__":
-    r = np.random.rand(2) * 4e5 - 2e5
-    v = np.random.rand(2) * 4 - 2
-    gm = 42328.372
-    print(min_dv_capture(r, v, gm))
+    test1 = False
+    if test1:
+        r = np.random.rand(2) * 4e5 - 2e5
+        v = np.random.rand(2) * 4 - 2
+        gm = 42328.372
+        print(min_dv_capture(r, v, gm))
+
+    test2 = True
+    if test2:
+        r1 = np.array([10000, 5000, 0.])
+        v1 = np.array([-3, -4, 0.])
+        r2 = np.array([-150000000, 0, 0.])
+        v2 = np.array([0, -30, 0.])
+        r3 = change_central_body(r1, r2)
+        v3 = change_central_body(v1, v2)
+        print(r3)
+        print(v3)

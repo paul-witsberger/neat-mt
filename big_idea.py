@@ -69,13 +69,12 @@ def eval_traj_neat(genome: neat.genome.DefaultGenome, config: neat.config.Config
     if num_cases > 1:
         if rdo:
             # Robust Design Optimization
-            # TODO test this out with different weights
             c = 1.  # weight to favor mean vs std
             f_mean = np.mean(f)
             f_std = np.std(f)
             f = c * f_mean + (1 - c) * f_std
 
-        # Reliability-Based Design Optimization
+        # TODO Reliability-Based Design Optimization
         elif rbdo:
             f_mean = np.mean(f)
             f_constraint_violation = number_cases_outside_bounds / total_cases
@@ -175,7 +174,7 @@ def evalTraj(W: np.ndarray, params: list) -> float:
     # return f
 
 
-@njit
+# @njit
 def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float, t_ratio: float = 0.) \
         -> (float, float, float):
     """
@@ -255,15 +254,10 @@ def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float,
         dy0 = 0. if dy0 > 0.2 else 1000.
         f += dy0
 
-    # TODO always output errors
-    # if output_errors:
+    # Dimensionalize error values
     dr *= a0_max
     dv *= yf_mag
-    # print('dr = %.3f km' % dr)
-    # print('dv = %.3f km/s' % dv)
     return f, dr, dv
-    # else:
-    #     return f
 
 
 def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat, y0: np.ndarray, ti: np.ndarray,
@@ -278,9 +272,8 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
     # Define lengths of vectors for C++
     state_size, time_size = len(y0), 2
     param_size = 17 if variable_power else 5
-    # param = [mdry, thrust_vec x3, ref power, min power, max power, thrust coef x5, isp coef x5]
 
-    # Create placeholder matrix for trajectory
+    # Create placeholder matrix for trajectory - these are dimensionalized states
     y = np.zeros((len(ti), state_size))
 
     # Assign initial condition
@@ -290,7 +283,6 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
     tbp = boost_tbp.TBP()
 
     # Define flag for missed thrust
-    # global missed_thrust_allowed
     if missed_thrust_allowed:
         miss_ind = calculate_missed_thrust_events(ti * tu)
     else:
@@ -302,10 +294,10 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
     # Main loop
     # Choose type of integrator and equations of motion
     if fixed_step:
-        integrator_type = 0 # 0 fixed step
+        integrator_type = 0  # 0 fixed step
     else:
-        integrator_type = 1 # adaptive step
-    eom_type = 0 # 0 constant power, 1 variable power, 2 state transition matrix
+        integrator_type = 1  # adaptive step
+    eom_type = 0  # 0 constant power, 1 variable power, 2 state transition matrix
     full_traj = []
     for i in range(len(ti) - 2):
         # Check if orbital energy is within reasonable bounds - terminate integration if not
@@ -342,55 +334,70 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
         traj = tbp.prop(list(y[i] / scales), [ti[i], ti[i+1]], param, state_size, time_size, param_size, rtol, atol,
                         step_size, int(integrator_type), int(eom_type))
 
-        # save full trajectory
+        # save full trajectory including intermediate states
         full_traj.extend(traj[1:])
 
         # save final state of current leg
         y[i+1] = np.array(traj[-1])[1:] * scales
 
-    # Check if final position is "close" to target position - if not, compute a Lambert arc to exactly match target state
-    final_tol = 0.1 # non-dimensional position
-    if np.linalg.norm((y[-2, :3] - yf[:3]) / scales[:3]) > final_tol and do_terminal_lambert_arc:
-        # Compute velocities of two points of a Lambert arc connecting final point and target point
-        # v1, v2, tof = min_energy_lambert(y[-2, :3], yf[:3])
-        tof, dv1, dv2 = lambert_min_dv(gm, y[-2, :3], y[-2, 3:6], yf[:3], yf[3:6])
+    # TODO (2) break this following part into its own function
+    # Check if final position is "close" to target position - if not, compute a Lambert arc to match target state
+    pos_tol = 0.1  # outer non-dimensional position
+    pos_error = np.linalg.norm((y[-2, :3] - yf[:3]) / scales[:3])
+    if do_terminal_lambert_arc:
+        # Compute maneuvers required to capture into a target orbit
+        alt_periapsis = 100
+        if pos_error > pos_tol:  # very far away
+            dv1, dv2, tof = lambert_min_dv(gm, y[-2, :3], y[-2, 3:6], yf[:3], yf[3:6])
+            change_frame = False
+        else:
+            dv1, dv2, tof = min_dv_capture(y[-2, :3], y[-2, 3:6], yf[:3], yf[3:6], u_mars_km3s2,
+                                           r_mars_km + alt_periapsis)
+            change_frame = True
 
-        # Compute first required delta v
-        # dv1 = v1 - y[-2, 3:6]
-        dv1_mag = np.linalg.norm(dv1)
+        # Compute delta v magnitudes
+        dv1_mag = mag3(dv1)
+        dv2_mag = mag3(dv2)
 
         # Add time of flight to time vector
         ti[-1] = ti[-2] + tof / tu
 
         # Add first delta v
         y[-2, 3:6] += dv1
+        if change_frame:
+            # TODO (1) need to account for the different central body when using min_dv_capture() - it assumes Mars as
+            #  central body - need to make sure units are DIMENSIONALIZED when converting frames, then NONDIMENSINALIZED
+            #  for the integration
+            change_central_body(dv1, v_)
+            y[-2, 3:6] -= r_mars_sun
 
         # Compute mass after maneuver
         m_penultimate = y[-2, -1] / np.exp(dv1_mag * 1000 / g0_ms2 / Isp_chemical) / mu
         y[-2, -1] = m_penultimate * mu
 
         # Set up integration of Lambert arc
-        eom_type = 3 # 2BP only
+        eom_type = 3  # 2BP only
         state_size = len(y[-2]) - 1
         step_size = (ti[-1] - ti[-2]) / 50
         param, param_size = [], 0
+
         # Integrate Lambert arc
         traj = tbp.prop(list(y[-2, :-1] / scales[:-1]), [ti[-2], ti[-1]], param, state_size, time_size, param_size,
                         rtol, atol, step_size, int(integrator_type), int(eom_type))
 
-        # Add last leg to the trajectory
+        # Include mass in the state history
         last_leg = np.hstack((np.array(traj[1:]), m_penultimate * np.ones((len(traj) - 1, 1))))
+
+        # Add last leg to the trajectory history
         full_traj = np.vstack((full_traj, last_leg))
 
-        # save final state of current leg
+        # Save final state of current leg
         y[-1] = full_traj[-1, 1:] * scales
 
         # Compute second required delta V to get on to target orbit
-        # dv2 = yf[3:6] - y[-1, 3:6]
         y[-1, 3:6] += dv2
 
         # Compute mass after maneuver
-        dv2_mag = np.linalg.norm(dv2)
         m_final = m_penultimate / np.exp(dv2_mag * 1000 / g0_ms2 / Isp_chemical)
 
         # Update final mass
@@ -404,7 +411,7 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
         ti[-1] = ti[-2]
         full_traj = np.array(full_traj)
 
-    # rescale states
+    # Dimensionalize states
     full_traj[:, 1:] = full_traj[:, 1:] * scales
 
     return y, miss_ind, full_traj, dv1, dv2
@@ -416,7 +423,6 @@ def calculate_missed_thrust_events(ti: np.ndarray) -> np.ndarray:
     :param ti:
     :return:
     """
-
     # Define Weibull distribution parameters
     lambda_tbe = 0.62394 * missed_thrust_tbe_factor
     k_tbe = 0.86737
@@ -541,6 +547,10 @@ def calculate_prop_margins(genome: neat.genome.DefaultGenome, config: neat.confi
 
 
 def run_margins():
+    """
+    Runner function to calculate propellant margins for a given neural network.
+    :return:
+    """
     local_dir = os.path.dirname(__file__)
     config_path = os.path.join(local_dir, 'config-feedforward')
     config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction, neat.DefaultSpeciesSet, neat.DefaultStagnation,

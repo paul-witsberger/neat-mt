@@ -214,7 +214,6 @@ def sensitivity(t: np.ndarray, x: np.ndarray, m: np.ndarray, u: np.ndarray) -> n
     :param u:
     :return:
     """
-
     # Number of rows = number of timesteps
     n = len(t)
 
