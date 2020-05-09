@@ -2,6 +2,7 @@
 
 from constants import *
 
+max_generations = 1000
 
 gm = u_sun_km3s2
 n_dim = 2
@@ -36,6 +37,10 @@ true_final_f = False
 elliptical_initial = True if e0_max > 0 else False
 elliptical_final = True if ef_max > 0 else False
 
+init_body = 'earth'
+target_body = 'mars'
+central_body = 'sun'
+
 # Specify spacecraft and engine parameters
 m_dry = 10000
 m_prop = 3000
@@ -53,7 +58,7 @@ if variable_power:
 else:
     T_max_kN = 1.2 * 1e-3  # 2 x HERMeS engines with 37.5 kW  # 21.8 mg/s for one thruster
     Isp = 2780
-Isp_chemical = 370  # for the final correction burns
+isp_chemical = 370  # for the final correction burns
 
 # Define time of flight
 t0 = 0.
@@ -115,14 +120,17 @@ rp_penalty_multiplier = 10000
 # Choose to add a penalty for not thrusting at all (just staying in initial orbit)
 no_thrust_penalty = True
 
+# Choose a penalty for trajectories that leave the allowable zone
+big_penalty = 10000
+
 # Choose maximum energy to allow before stopping integration
 max_energy = - u_sun_km3s2 / 2 / max(a0_max, af_max) * 0.8
 min_energy = - u_sun_km3s2 / 2 / min(a0_min, af_min) * 1.2
 
 # Choose whether missed thrust events occur or not, and scale time-between-events and recovery-duration
 missed_thrust_allowed = True
-missed_thrust_tbe_factor = 1.
-missed_thrust_rd_factor = 1.
+missed_thrust_tbe_factor = 1.  # make less than one for events to be more frequent
+missed_thrust_rd_factor = 1.  # make greater than one for events to be more severe
 
 # Specify the indices of the input array that should be used
 # input_indices = np.array([0, 1, 2, 3, 8, 9])
@@ -130,3 +138,5 @@ input_indices = None
 
 # Specify if a Lambert arc should be computed to match the final state
 do_terminal_lambert_arc = True
+terminal_integration_steps = 50
+position_tol = 0.1  # outer non-dimensional position

@@ -9,6 +9,7 @@ import boost_tbp
 import big_idea
 import numpy as np
 
+
 _frames_conversions = {
     'kepmee3': ou.keplerian_to_mee_3d,
     'kepinr3': ou.keplerian_to_inertial_3d,
@@ -49,6 +50,7 @@ class Spacecraft:
         self._mass = mass if mass is not None else 0.
         self.engine_params = engine_params if engine_params is not None else _const_thrust_engine_params
         self.dry_mass = tc.m_dry
+        self.controller = None
         self.set_controller(genome=genome)
 
     @property
@@ -90,37 +92,23 @@ class Spacecraft:
 
 class Trajectory:
     def __init__(self, central_body: str = 'sun', frame: str = 'kep', dim: int = tc.n_dim,
-                 genome: neat.genome.DefaultGenome = None):
-        self.spacecraft = Spacecraft(dim=dim, state=init_sc_state, genome=genome)
-        self._initialize_integrator_opts()
-        self._init_times()
-        self.unscaled_states = init_sc_state if init_sc_state is not None else []
-        self.scaled_states = []
+                 genome: neat.genome.DefaultGenome = None, save_full_traj: bool = False):
+        # TODO can one trajectory have multiple spacecraft, where each spacecraft is evaluated separately?
+        self.spacecraft = Spacecraft(dim=dim, genome=genome)
+        self._init_integrator_opts()
+        self._init_times_and_states()
         self._dim = dim
         self._frame = frame
         self._central_body = central_body
         self.traj_config = tc
+        self.flag = 0  # used for checking integration status
+        self.save_full_traj = save_full_traj
+        self.evaluated = False
+        self.dv1 = np.zeros(3, float)
+        self.dv2 = np.zeros(3, float)
+        self.fitness = None
         self._update_sizes()
         self._update_params(np.zeros(3, float))
-
-    def _initialize_integrator_opts(self):
-        """
-        Helper function to set up integrator and related variables.
-        :return:
-        """
-        # Define scales to nondimensionalize state for integration
-        du = max(tc.a0_max, tc.af_max)
-        tu = (du ** 3 / tc.gm) ** 0.5
-        mu = tc.m0
-        self.fu = mu * du / tu / tu
-        if self.dim == 2:
-            self.state_scales = [du, du, du / tu, du / tu, mu]
-        else:
-            self.state_scales = [du, du, du, du / tu, du / tu, du / tu, mu]
-        self.du, self.tu, self.mu = du, tu, mu
-        self.integrator_opts = {'step_type': 0 if tc.fixed_step else 1,
-                                'eom_type': 1 if tc.variable_power else 0}
-        self.integrator = boost_tbp.TBP()
 
     @property
     def dim(self) -> int:
@@ -138,11 +126,41 @@ class Trajectory:
     def central_body(self) -> str:
         return self._central_body
 
+    # TODO should I convert all states when this is changed?
     @central_body.setter
     def central_body(self, value: str):
+        self.unscaled_states[:, :-1] = ou.change_central_body(self.unscaled_states[:, :-1], self.unscaled_times,
+                                                              self.central_body, value)
+        self.scaled_states[:, :-1] = self.unscaled_states[:, :-1] / self.state_scales[:-1]
         self._central_body = value
 
-    def _init_times(self, spacing: str = 'linear'):
+    def _init_integrator_opts(self):
+        """
+        Helper function to set up integrator and related variables.
+        :return:
+        """
+        # Define scales to nondimensionalize state for integration - distance unit, time unit, mass unit, force unit
+        du = max(tc.a0_max, tc.af_max)
+        tu = (du ** 3 / tc.gm) ** 0.5
+        mu = tc.m0
+        self.fu = mu * du / tu / tu
+        if self.dim == 2:
+            self.state_scales = [du, du, du / tu, du / tu, mu]
+        else:
+            self.state_scales = [du, du, du, du / tu, du / tu, du / tu, mu]
+        self.du, self.tu, self.mu = du, tu, mu
+        self.integrator_opts = {'step_type': 0 if tc.fixed_step else 1,
+                                'eom_type': 1 if tc.variable_power else 0}
+        self.integrator = boost_tbp.TBP()
+
+    def _init_times_and_states(self, spacing: str = 'linear'):
+        """
+        Creates arrays for time - both unscaled and scaled. Spacing between times can be linear or power law. Also
+        create arrays for states - both unscaled (dimensional) and scaled (dimensionless). Includes position, velocity,
+        and mass.
+        :param spacing:
+        :return:
+        """
         if spacing == 'linear':
             t = np.linspace(tc.t0, tc.tf, tc.num_nodes)
         elif spacing == 'power':
@@ -152,66 +170,150 @@ class Trajectory:
         t = np.append(t, t[-1])
         self.unscaled_times = t
         self.scaled_times = t / self.tu
+        self.unscaled_states = np.empty((tc.num_nodes, 2 * self.dim + 1), float)
+        self.scaled_states = np.empty_like(self.unscaled_states, float)
+        self.full_traj = np.empty(((tc.num_nodes - 1) * tc.n_steps + 1))
+        # TODO verify that steps between nodes -2 and -1 aren't different from other steps for full_traj
 
-    # TODO - Implement propagate function
-    #   1. Initialize state, time, mass, and full state matrices
-    #   2. Main trajectory integration
-    #   3. Post-transfer capture manuever
-    def propagate(self, y0, yf, include_missed_thrust: bool = tc.missed_thrust_allowed,
-                  save_full_traj: bool = False):
-        self._propagate_main_leg(y0, yf, include_missed_thrust, save_full_traj)
-        self._post_transfer_capture(yf)
-
-    def _propagate_main_leg(self, y0, yf, include_missed_thrust: bool, save_full_traj: bool):
+    def _propagate_main_leg(self, y0: np.ndarray, yf: np.ndarray, include_missed_thrust: bool):
+        """
+        Propagates the trajectory of a spacecraft starting from the initial body along a powered flight towards a
+        target body.
+        :param y0:
+        :param yf:
+        :param include_missed_thrust:
+        :return:
+        """
         # Get the indices of the legs that will experience missed thrust
-        if tc.missed_thrust_allowed and include_missed_thrust:
-            miss_ind = big_idea.calculate_missed_thrust_events(self.times * self.tu)
+        if include_missed_thrust:
+            miss_ind = big_idea.calculate_missed_thrust_events(self.unscaled_times)
         else:
             miss_ind = np.array([]).astype(int)
 
-        full_traj = []
-        for i in range(len(self.times) - 2):
+        self.unscaled_states[0, :] = y0
+        self.scaled_states[0, :] = y0 / self.state_scales
+
+        # Main loop - check if integration should continue, get values needed for the integrator that change with each
+        #             step, integrate one time step, and save results
+        for i in range(tc.num_nodes - 2):
             # Check if orbital energy is within reasonable bounds - terminate integration if not
-            r = np.linalg.norm(y[i, :3])
-            eps = (np.linalg.norm(y[i, 3:6]) ** 2 / 2 - tc.gm / r)
-            if (eps > tc.max_energy or eps < tc.min_energy) and not save_full_traj:
-                return np.array(0), 0, 0, 0, 0
+            r = np.linalg.norm(self.unscaled_states[i, :3])
+            eps = (np.linalg.norm(self.unscaled_states[i, 3:6]) ** 2 / 2 - tc.gm / r)
+            if (eps > tc.max_energy or eps < tc.min_energy) and not self.save_full_traj:
+                self.flag = 1
+                break
 
             # Fixed step integrator step size
-            step_size = (self.times[i + 1] - self.times[i]) / tc.n_steps
+            step_size = (self.scaled_times[i + 1] - self.scaled_times[i]) / tc.n_steps
 
             # Get ratio of remaining propellant mass and elapsed time ratio
-            mass_ratio = (y[i, -1] - self.spacecraft.dry_mass) / (y[0, -1] - self.spacecraft.dry_mass)
-            time_ratio = self.times[i] / self.times[-2]
+            mass_ratio = (self.unscaled_states[i, -1] - self.spacecraft.dry_mass) / \
+                         (self.unscaled_states[0, -1] - self.spacecraft.dry_mass)
+            time_ratio = self.scaled_times[i] / self.scaled_times[-2]
 
             # Check if i is supposed to miss thrust for this segment
-            if i in miss_ind or y[i, -1] <= self.spacecraft.dry_mass + 0.01:
-                # Missed-thrust event, or no propellant remaining
+            if i in miss_ind or self.unscaled_states[i, -1] <= self.spacecraft.dry_mass + 0.01:
+                # Missed-thrust event is occurring, or no propellant remaining
                 thrust = np.array([0, 0, 0], float)
             else:
-                # query NN to get next thrust vector
-                thrust = self.spacecraft.controller(np.hstack((y[i, tc.ind_dim], yf[tc.ind_dim[:-1]], mass_ratio,
-                                                               time_ratio)), float) \
+                # Query NN to get next thrust vector
+                # TODO check if scale is same for constant vs variable power
+                thrust = self.spacecraft.controller(np.hstack((self.unscaled_states[i, tc.ind_dim], yf[tc.ind_dim[:-1]],
+                                                               mass_ratio, time_ratio)), float) \
                          * self.spacecraft.engine_params['thrust_max_n'] / self.fu
-
             self._update_params(thrust)
 
             # propagate from the current state until the next time step
-            traj = self.integrator.prop(self.scaled_states[i].aslist(), self.times[i:i+2].aslist(), self.params,
+            traj = self.integrator.prop(self.scaled_states[i].aslist(), self.scaled_times[i:i+2].aslist(), self.params,
                                         self.sizes['states'], self.sizes['times'], self.sizes['param'], tc.rtol,
                                         tc.atol, step_size, self.integrator_opts['step_type'],
                                         self.integrator_opts['eom_type'])
 
             # save full trajectory including intermediate states
-            full_traj.extend(traj[1:])
+            self.full_traj.extend(traj[1:])  # TODO fix this
 
             # save final state of current leg
-            y[i + 1] = np.array(traj[-1])[1:] * self.integrator_opts['scales']
+            self.scaled_states[i + 1] = np.array(traj[-1])[1:]
+            self.unscaled_states[i + 1] = self.scaled_states[i + 1] * self.state_scales
 
-    def _post_transfer_capture(self):
-        pass
+    # TODO Implement post-transfer capture
+    def _post_transfer_capture(self, yf: np.ndarray) -> None:
+        # Check if final position is "close" to target position - if not, compute a Lambert arc to match target state
+        pos_error = np.linalg.norm((self.unscaled_states[-2, :3] - yf[:3]) / self.state_scales[:3])
+        if tc.do_terminal_lambert_arc:
+            # Compute maneuvers required to capture into a target orbit
+            alt_periapsis = 100
+            if pos_error > tc.position_tol:  # very far away
+                self.dv1, self.dv2, tof = ou.lambert_min_dv(tc.gm, self.unscaled_states[-2], yf)
+                change_frame = False
+            else:
+                self.dv1, self.dv2, tof = ou.min_dv_capture(self.unscaled_states[-2], yf, c.u_mars_km3s2,
+                                                            c.r_mars_km + alt_periapsis)
+                change_frame = True
 
-    def _update_params(self, thrust):
+            # Compute delta v magnitudes
+            dv1_mag = ou.mag3(self.dv1)
+            dv2_mag = ou.mag3(self.dv2)
+
+            # Add time of flight to time vector
+            self.scaled_times[-1] = self.scaled_times[-2] + tof / self.tu
+            self.unscaled_times[-1] = self.unscaled_times[-2] + tof
+
+            # Add first delta v
+            self.unscaled_states[-2, 3:6] += self.dv1
+            if change_frame:
+                self.central_body = 'mars'  # TODO test this line
+
+            # Compute mass after maneuver
+            m_penultimate = self.unscaled_states[-2, -1] / np.exp(dv1_mag * 1000 / c.g0_ms2 / tc.isp_chemical)
+            self.unscaled_states[-2, -1] = m_penultimate
+            self.scaled_states[-2, -1] = m_penultimate / self.mu
+
+            # Set up integration of Lambert arc
+            eom_type = 3  # 2BP only
+            state_size = self.dim * 2
+            step_size = (self.scaled_times[-1] - self.scaled_times[-2]) / tc.terminal_integration_steps
+            params, param_size = [], 0
+
+            # Integrate Lambert arc
+            traj = self.integrator.prop(self.scaled_states[-2].aslist(), self.scaled_times[-2:].aslist(), params,
+                                        state_size, self.sizes['times'], param_size, tc.rtol, tc.atol, step_size,
+                                        self.integrator_opts['step_type'], eom_type)
+
+            # Include mass in the state history
+            last_leg = np.hstack((np.array(traj[1:]), m_penultimate * np.ones((len(traj) - 1, 1))))
+
+            # Add last leg to the trajectory history
+            self.full_traj = np.vstack((self.full_traj, last_leg))  # TODO preallocate full_traj
+
+            # Save final state of current leg
+            self.scaled_states[-1] = self.full_traj[-1, 1:]
+            self.unscaled_states[-1] = self.full_traj[-1, 1:] * self.state_scales
+
+            # Compute second required delta V to get on to target orbit
+            self.unscaled_states[-1, 3:6] += self.dv2
+            self.scaled_states[-1, 3:6] = self.scaled_states / self.state_scales[3:6]
+
+            # Compute mass after maneuver
+            m_final = m_penultimate / np.exp(dv2_mag * 1000 / c.g0_ms2 / tc.isp_chemical)
+
+            # Update final mass
+            self.unscaled_states[-1, -1] = m_final
+            self.scaled_states[-1, -1] = m_final / self.mu
+            self.full_traj[-1, -1] = m_final
+
+            if change_frame:
+                self.central_body = 'sun'
+
+        else:
+            # No maneuver
+            self.unscaled_states[-1] = self.unscaled_states[-2]
+            self.scaled_times[-1] = self.scaled_times[-2]
+
+        # Dimensionalize states
+        self.full_traj[:, 1:] *= self.state_scales
+
+    def _update_params(self, thrust: [list, np.ndarray]) -> None:
         # create list of parameters to pass to integrator
         if self.spacecraft.engine_params['variable_power']:
             self.params = [*thrust,
@@ -226,7 +328,7 @@ class Trajectory:
                            self.spacecraft.dry_mass / self.mu,
                            c.g0_ms2 * self.spacecraft.engine_params['isp_s'] / self.du * self.tu]
 
-    def _update_sizes(self):
+    def _update_sizes(self) -> None:
         """
         # Define lengths of input vectors to the integrator
         :return:
@@ -236,14 +338,75 @@ class Trajectory:
                       'param': 17 if self.spacecraft.engine_params['variable_power'] else 5}
 
     # TODO update frame conversion formats - maybe make a wrapper that interprets the strings?
-    def convert_frame_to(self, new_frame):
+    def convert_frame_to(self, new_frame: str) -> None:
+        """
+        Change the state vector to a different frame.
+        :param new_frame:
+        :return:
+        """
         if not new_frame == self.frame:
             self._state = _frames_conversions[self._frame + new_frame + str(self._dim)](self._state, self._central_body)
             self._frame = new_frame
 
-    def evaluate(self, save_full_traj: bool = False):
-        f = np.ones(tc.num_cases) * np.inf
+    def evaluate(self) -> float:
+        self.fitness = np.ones(tc.num_cases) * np.inf
         for i in range(tc.num_cases):
+            # TODO boundary conditions should be based on initial and target planets with a specified time of flight
             y0, yf = big_idea.make_new_bcs()
-            self.propagate(y0, yf, save_full_traj)
-            raise (NotImplementedError)
+            self.propagate(y0, yf)
+
+            # Check if integration was terminated early
+            if self.flag == 1:
+                self.fitness[i] = tc.big_penalty
+                continue
+
+            # Get final state before capture maneuver
+            yf_actual = self.unscaled_states[-2, tc.ind_dim]
+            yf_actual[tc.n_dim:] -= self.dv1[:tc.n_dim]
+            yf_target = yf[tc.ind_dim[:-1]]
+
+            # Calculate propellant mass ratio and final time ratio
+            m_ratio = (y0[-1] - self.unscaled_states[-1, -1]) / y0[-1]
+            t_ratio = self.unscaled_times[-1] / self.unscaled_times[-2]
+
+            # Get fitness
+            self.fitness[i], dr, dv = big_idea.traj_fit_func(yf_actual, yf_target, y0, m_ratio, t_ratio)
+
+        # Calculate scalar fitness using one of the following methods
+        rdo = False
+        rbdo = False
+        if tc.num_cases > 1:
+            if rdo:
+                # Robust Design Optimization
+                alpha = 1.  # weight to favor mean vs std
+                f_mean = np.mean(self.fitness)
+                f_std = np.std(self.fitness)
+                f = alpha * f_mean + (1 - alpha) * f_std
+
+            # TODO Reliability-Based Design Optimization
+            elif rbdo:
+                f_mean = np.mean(self.fitness)
+                f_constraint_violation = number_cases_outside_bounds / tc.num_cases
+                alpha = 100.
+                f = f_mean + alpha * f_constraint_violation
+
+            # Mean
+            else:
+                f = np.mean(self.fitness)
+        else:
+            f = self.fitness[0]
+
+        return -f
+
+    def propagate(self, y0: np.ndarray, yf: np.ndarray, include_missed_thrust: bool = tc.missed_thrust_allowed) -> None:
+        """
+        Calls the internal functions with each segment of the trajectory. Start with the main leg, and optionally add a
+        post-transfer capture maneuver.
+        :param y0:
+        :param yf:
+        :param include_missed_thrust:
+        :return:
+        """
+        self._propagate_main_leg(y0, yf, include_missed_thrust)
+        if tc.do_terminal_lambert_arc:
+            self._post_transfer_capture(yf)

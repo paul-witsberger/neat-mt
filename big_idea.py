@@ -1,9 +1,3 @@
-# Run the GA for:
-# - first, one set of boundary conditions; each controller is used on several trajectories that each have a random
-#       single outage
-# - next, each controller is used on several trajectories that have independent boundary conditions and random outages
-# - next, include multiple outages
-
 from nnet import Neurocontroller
 import boost_tbp
 import neatfast as neat
@@ -174,7 +168,6 @@ def evalTraj(W: np.ndarray, params: list) -> float:
     # return f
 
 
-# @njit
 def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float, t_ratio: float = 0.) \
         -> (float, float, float):
     """
@@ -340,7 +333,6 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
         # save final state of current leg
         y[i+1] = np.array(traj[-1])[1:] * scales
 
-    # TODO (2) break this following part into its own function
     # Check if final position is "close" to target position - if not, compute a Lambert arc to match target state
     pos_tol = 0.1  # outer non-dimensional position
     pos_error = np.linalg.norm((y[-2, :3] - yf[:3]) / scales[:3])
@@ -510,8 +502,7 @@ def calculate_prop_margins(genome: neat.genome.DefaultGenome, config: neat.confi
                                                                         missed_thrust_allowed=missed_thrust_allowed)
 
         yf_actual = y[-2, ind_dim]
-        f, _dr, _dv = traj_fit_func(yf_actual, yf[ind_dim[:-1]], y0, (y0[-1] - y[-1, -1]) / y0[-1], ti[-1] / ti[-2],
-                                  output_errors=True)
+        f, _dr, _dv = traj_fit_func(yf_actual, yf[ind_dim[:-1]], y0, (y0[-1] - y[-1, -1]) / y0[-1], ti[-1] / ti[-2])
 
         # Save final mass
         # print(y[-1, -1])

@@ -1,12 +1,10 @@
-from __future__ import print_function
-
 import os
 import pickle
-
 import neatfast as neat
 from neatfast import visualize
 from big_idea import eval_traj_neat
 from builder import make_last_traj, make_neat_network_diagram
+from traj_config import max_generations
 
 
 def run():
@@ -27,7 +25,6 @@ def run():
     num_workers = os.cpu_count() - 1
     # num_workers = 1  # for debugging purposes
     pe = neat.ParallelEvaluator(num_workers, eval_traj_neat)
-    max_generations = 1000
     winner = pop.run(pe.evaluate, n=max_generations)
 
     # Save the winner.

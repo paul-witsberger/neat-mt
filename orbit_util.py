@@ -1,8 +1,9 @@
 import numpy as np
-from math import gamma
+from math import gamma, cos, sin
 from traj_config import gm, year_to_sec
 from numba import njit
 from copy import copy
+from constants import ephem, sec_to_day, reference_date_jd1950, day_to_jc
 
 
 @njit
@@ -288,14 +289,18 @@ def inertial_to_keplerian_3d(state: np.ndarray, gm: float = gm) -> np.ndarray:
 
 
 @njit
-def keplerian_to_perifocal_3d(state: np.ndarray, gm: float = gm) -> np.ndarray:
+def keplerian_to_perifocal_3d(state: np.ndarray, gm: float = gm, mean_or_true: str = 'true') -> np.ndarray:
     """
     Convert a 3D state vector from Keplerian to perifocal
     :param state:
     :param gm:
     :return:
     """
-    a, e, i, w, om, f = state
+    if mean_or_true == 'true':
+        a, e, i, w, om, f = state
+    else:
+        a, e, i, w, om, m = state
+        f = np.array([mean_to_true_anomaly(mm, e) for mm in m], float)
     p = a * (1 - e ** 2)
     r_p = np.array([p * np.cos(f) / (1 + e * np.cos(f)), p * np.sin(f) / (1 + e * np.cos(f)), 0.])
     v_p = np.array([-np.sqrt(gm / p) * np.sin(f), np.sqrt(gm / p) * (e + np.cos(f)), 0.])
@@ -303,7 +308,7 @@ def keplerian_to_perifocal_3d(state: np.ndarray, gm: float = gm) -> np.ndarray:
 
 
 @njit
-def keplerian_to_inertial_3d(state: np.ndarray, gm: float = gm) -> np.ndarray:
+def keplerian_to_inertial_3d(state: np.ndarray, gm: float = gm, mean_or_true: str = 'true') -> np.ndarray:
     """
     Convert a 3D state vector from Keplerian to inertial
     :param state:
@@ -311,7 +316,7 @@ def keplerian_to_inertial_3d(state: np.ndarray, gm: float = gm) -> np.ndarray:
     :return:
     """
     a, e, i, w, om, f = state
-    state_peri = keplerian_to_perifocal_3d(state, gm=gm)
+    state_peri = keplerian_to_perifocal_3d(state, gm=gm, mean_or_true=mean_or_true)
     r_p, v_p = state_peri[:3], state_peri[3:]
 
     # Perform 3-1-3 rotation element-wise
@@ -344,14 +349,18 @@ def keplerian_to_inertial_3d(state: np.ndarray, gm: float = gm) -> np.ndarray:
 
 
 @njit
-def keplerian_to_perifocal_2d(state: np.ndarray, gm: float = gm) -> np.ndarray:
+def keplerian_to_perifocal_2d(state: np.ndarray, gm: float = gm, mean_or_true: str = 'true') -> np.ndarray:
     """
     Convert a 2D state vector from Keplerian to perifocal
     :param state:
     :param gm:
     :return:
     """
-    a, e, w, f = state
+    if mean_or_true == 'true':
+        a, e, w, f = state
+    else:
+        a, e, w, m = state
+        f = np.array([mean_to_true_anomaly(mm, e) for mm in m], float)
     p = a * (1 - e ** 2)
     r_p = np.hstack((np.array(p * np.cos(f) / (1 + e * np.cos(f))), np.array(p * np.sin(f) / (1 + e * np.cos(f)))))
     v_p = np.hstack((np.array(-np.sqrt(gm / p) * np.sin(f)), np.array(np.sqrt(gm / p) * (e + np.cos(f)))))
@@ -359,7 +368,7 @@ def keplerian_to_perifocal_2d(state: np.ndarray, gm: float = gm) -> np.ndarray:
 
 
 @njit
-def keplerian_to_inertial_2d(state: np.ndarray, gm: float = gm) -> np.ndarray:
+def keplerian_to_inertial_2d(state: np.ndarray, gm: float = gm, mean_or_true: str = 'true') -> np.ndarray:
     """
     Convert a 2D state vector from Keplerian to inertial
     :param state:
@@ -367,8 +376,7 @@ def keplerian_to_inertial_2d(state: np.ndarray, gm: float = gm) -> np.ndarray:
     :return:
     """
     # Convert to perifocal frame
-    a, e, w, f = state
-    state_peri = keplerian_to_perifocal_2d(state, gm=gm)
+    state_peri = keplerian_to_perifocal_2d(state, gm=gm, mean_or_true=mean_or_true)
     r_p, v_p = state_peri[:2], state_peri[2:]
     # Construct DCMs
     # if len(np.shape(a)) == 0:
@@ -676,10 +684,10 @@ def vallado(k: float, r0: np.ndarray, r: np.ndarray, tof: float, short: bool, nu
     return v0, v
 
 
-def lambert_min_dv(k: float, r0: np.ndarray, v0: np.ndarray, rf: np.ndarray, vf: np.ndarray, short: bool = True,
-                   do_print: bool = False) -> (np.ndarray, np.ndarray, float):
+def lambert_min_dv(k: float, state: np.ndarray, state_f: np.ndarray, short: bool = True, do_print: bool = False) \
+        -> (np.ndarray, np.ndarray, float):
     """
-    Computes the minimum delta V transfer between two states assuming a two-impulse manuever.
+    Computes the minimum delta V transfer between two states assuming a two-impulse maneuver.
     :param k:
     :param r0:
     :param v0:
@@ -689,6 +697,8 @@ def lambert_min_dv(k: float, r0: np.ndarray, v0: np.ndarray, rf: np.ndarray, vf:
     :param do_print:
     :return:
     """
+    r0, v0 = state[:3], state[3:6]
+    rf, vf = state_f[:3], state_f[3:6]
     # Define parameters for search
     count = 0
     max_count = 20
@@ -892,8 +902,8 @@ def time_to_periapsis_from_r_v(r_vec: np.ndarray, v_vec: np.ndarray, gm: float =
     return time_to_periapsis
 
 
-def min_dv_capture(r_sc_vec: np.ndarray, v_sc_vec: np.ndarray, r_target_vec: np.ndarray, v_target_vec: np.ndarray,
-                   gm: float, r_periapsis_km: float) -> (np.ndarray, np.ndarray, float):
+def min_dv_capture(state_sc: np.ndarray, state_target: np.ndarray, gm: float, r_periapsis_km: float) \
+        -> (np.ndarray, np.ndarray, float):
     """
     Computes the delta V required to capture into a desired circular orbit. The assumed inputs are radius and velocity
     vectors of the spacecraft with respect to the sun, and the radius and velocity vectors of target planet with respect
@@ -908,6 +918,8 @@ def min_dv_capture(r_sc_vec: np.ndarray, v_sc_vec: np.ndarray, r_target_vec: np.
     :return:
     """
     # Get relative vectors
+    r_sc_vec, v_sc_vec = state_sc[:3], state_sc[3:6]
+    r_target_vec, v_target_vec = state_target[:3], state_target[3:6]
     r_vec = r_sc_vec - r_target_vec
     v_vec = v_sc_vec - v_target_vec
     # Compute current energy
@@ -958,15 +970,69 @@ def rotate_vector_2d(vec: np.ndarray, angle: float) -> np.ndarray:
 
 
 @njit
-def change_central_body(cb1_to_sc: np.ndarray, cb2_to_cb1: np.ndarray) -> np.ndarray:
+def shift_vector_origin(cb1_to_sc: np.ndarray, cb2_to_cb1: np.ndarray) -> np.ndarray:
     """
     Change the central body by which a vector is defined.
     :param cb1_to_sc:
     :param cb2_to_cb1:
     :return:
     """
-    cb2_to_sc = cb2_to_cb1 + cb1_to_sc
+    cb2_to_sc = np.empty_like(cb1_to_sc, float)
+    for i in range(cb1_to_sc.shape[0]):
+        cb2_to_sc[i, :] = cb2_to_cb1[i, :] + cb1_to_sc
     return cb2_to_sc
+
+
+def change_central_body(states: np.ndarray, times: np.ndarray, cur_cb: str, new_cb: str) -> np.ndarray:
+    """
+    Shifts an array of states to be defined by a different reference over a time history.
+    :param states:
+    :param times:
+    :param cur_cb:
+    :param new_cb:
+    :return:
+    """
+    # Determine state history of new central body with respect to current central body
+    n_dim = states.shape[1]
+    assert n_dim == 4 or n_dim == 6
+    elements = ['a', 'e', 'w', 'M'] if n_dim == 2 else ['a', 'e', 'i', 'w', 'o', 'M']
+    assert cur_cb == 'sun' or new_cb == 'sun'
+    if cur_cb == 'sun':
+        planets = [new_cb]
+        flip = False
+    else:
+        planets = [cur_cb]
+        flip = True
+    times_jc = (times * sec_to_day + reference_date_jd1950) * day_to_jc
+    non_sun_cb_states = ephem(elements, planets, times_jc)
+    # Flip relative direction if the new body is 'sun'
+    cb2_to_cb1 = non_sun_cb_states if not flip else -non_sun_cb_states
+    # Convert to inertial coordinates
+    if n_dim == 4:
+        keplerian_to_inertial_2d(cb2_to_cb1, mean_or_true='mean')
+    else:
+        keplerian_to_inertial_3d(cb2_to_cb1, mean_or_true='mean')
+    # Shift vectors
+    new_states = shift_vector_origin(states, cb2_to_cb1)
+    return new_states
+
+
+@njit
+def mean_to_true_anomaly(m: float, e: float, tol: float = 1e-8) -> float:
+    # Assume small eccentricity
+    ea_guess = m
+    ea_next = ea_guess
+    for i in range(20):
+        ea_next = ea_guess + (m + e * sin(ea_guess) - ea_guess) / (1 - e * cos(ea_guess))
+        diff = ea_next - ea_guess
+        if abs(diff) < tol:
+            ea = ea_next
+            f = 2 * np.arctan(((1 + e) / (1 - e)) ** 0.5 * np.tan(ea / 2))
+            f = fix_angle(f, 2 * np.pi, 0)
+            return f
+        else:
+            ea_guess = ea_next
+    raise RuntimeError('Newton''s method did not converge.')
 
 
 if __name__ == "__main__":
@@ -977,7 +1043,7 @@ if __name__ == "__main__":
         gm = 42328.372
         print(min_dv_capture(r, v, gm))
 
-    test2 = True
+    test2 = False
     if test2:
         r1 = np.array([10000, 5000, 0.])
         v1 = np.array([-3, -4, 0.])
@@ -987,3 +1053,13 @@ if __name__ == "__main__":
         v3 = change_central_body(v1, v2)
         print(r3)
         print(v3)
+
+    test3 = True
+    if test3:
+        m = 135 * np.pi / 180
+        e = 0.1
+        ta = mean_to_true_anomaly(m, e)
+        print(ta)
+        # Quick and dirty approximation
+        ta2 = m + (2 * e - 0.25 * e ** 3) * sin(m) + 1.25 * e ** 2 * sin(2 * m) + 13 / 12 * e ** 3 * sin(3 * m)
+        print(ta2)

@@ -1,4 +1,6 @@
 import numpy as np
+from operator import itemgetter
+from numba import njit
 
 # Misc Earth parameters
 solar_constant = np.array(1.361)
@@ -144,4 +146,103 @@ vp_earth_kms = np.array(30.29)
 va_earth_kms = np.array(29.29)
 
 # Other
-reference_date_jd = np.array(2451545.0)
+reference_date_jd1950 = np.array(2433282.5)
+reference_date_jd2000 = np.array(2451545.0)
+day_to_jc = 1. / 36525  # day to Julian century
+
+# Mean anomaly coefficients
+_semimajor_axis_km = {'mercury': lambda c: 57.9091e6 * c / c,
+                      'venus': lambda c: 108.2089e6 * c / c,
+                      'earth': lambda c: 149.597927e6 * c / c,
+                      'mars': lambda c: 227.9410e6 * c / c,
+                      'jupiter': lambda c: 778.3284e6 * c / c,
+                      'saturn': lambda c: 1426.9908e6 * c / c,
+                      'uranus': lambda c: (2869.5862 - 0.0853 * c) * 1e6,
+                      'neptune': lambda c: (4496.5623 + 0.1810 * c) * 1e6,
+                      'pluto': lambda c: 5890.2138e6 * c / c
+                      }
+
+_eccentricity = {'mercury': lambda c: 0.2056244325 + 0.00002043 * c - 0.000000030 * c * c,
+                 'venus': lambda c: 0.00679684275 - 0.000047649 * c + 0.000000091 * c * c,
+                 'earth': lambda c: 0.0167301085 - 0.000041926 * c - 0.000000126 * c * c,
+                 'mars': lambda c: 0.09335891275 + 0.000091987 * c - 0.000000077 * c * c,
+                 'jupiter': lambda c: 0.04841911 + 0.00016302 * c,
+                 'saturn': lambda c: 0.055716475 - 0.00034705 * c,
+                 'uranus': lambda c: 288.465359 + 0.0117258558 * c,
+                 'neptune': lambda c: 150.769275 + 0.0059952644 * c,
+                 'pluto': lambda c: 301.687570 + 0.0039892964 * c
+                 }
+
+_inclination_rad = {'mercury': lambda c: (7.00381 - 0.00597 * c + 0.000001 * c * c) * deg_to_rad,
+                    'venus': lambda c: (3.39413 - 0.00086 * c - 0.00003 * c * c) * deg_to_rad,
+                    'earth': lambda c: (0.013076 * c - 0.000009 * c * c) * deg_to_rad,
+                    'mars': lambda c: (1.85000 - 0.00821 * c - 0.00002 * c * c) * deg_to_rad,
+                    'jupiter': lambda c: (1.30592 - 0.00205 * c + 0.00003 * c * c) * deg_to_rad,
+                    'saturn': lambda c: (2.49036 + 0.00186 * c - 0.00003 * c * c) * deg_to_rad,
+                    'uranus': lambda c: (0.77300 - 0.00186 * c - 0.00004 * c * c) * deg_to_rad,
+                    'neptune': lambda c: (1.77467 + 0.00037 * c + 0.00001 * c * c) * deg_to_rad,
+                    'pluto': lambda c: 17.16987 * deg_to_rad * c / c
+                    }
+
+_long_asc_node_rad = {'mercury': lambda c: (47.73859 - 0.12559 * c - 0.00009 * c * c) * deg_to_rad,
+                      'venus': lambda c: (76.22967 - 0.27785 * c - 0.00014 * c * c) * deg_to_rad,
+                      'earth': lambda c: (174.40956 - 0.24166 * c + 0.00006 * c * c) * deg_to_rad,
+                      'mars': lambda c: (49.17193 - 0.29470 * c - 0.00065 * c * c) * deg_to_rad,
+                      'jupiter': lambda c: (99.94335 - 0.16728 * c + 0.00055 * c * c) * deg_to_rad,
+                      'saturn': lambda c: (113.22015 - 0.25973 * c + 0.00002 * c * c) * deg_to_rad,
+                      'uranus': lambda c: (73.74521 + 0.06671 * c - 0.00068 * c * c) * deg_to_rad,
+                      'neptune': lambda c: (131.22959 - 0.00574 * c - 0.00029 * c * c) * deg_to_rad,
+                      'pluto': lambda c: 109.68346 * deg_to_rad * c / c
+                      }
+
+_arg_of_peri_rad = {'mercury': lambda c: (28.93892 + 0.28439 * c + 0.00007 * c * c) * deg_to_rad,
+                    'venus': lambda c: (54.63793 + 0.28818 * c - 0.00115 * c * c) * deg_to_rad,
+                    'earth': lambda c: (287.67097 + 0.56494 * c + 0.00009 * c * c) * deg_to_rad,
+                    'mars': lambda c: (285.96668 + 0.73907 * c + 0.00047 * c * c) * deg_to_rad,
+                    'jupiter': lambda c: (273.57374 + 0.04756 * c - 0.00086 * c * c) * deg_to_rad,
+                    'saturn': lambda c: (338.84837 + 0.82257 * c - 0.00033 * c * c) * deg_to_rad,
+                    'uranus': lambda c: (96.10329 + 0.16097 * c + 0.00037 * c * c) * deg_to_rad,
+                    'neptune': lambda c: (272.95650 - 0.51258 * c - 0.00002 * c * c) * deg_to_rad,
+                    'pluto': lambda c: 114.33841 * deg_to_rad * c / c
+                    }
+
+_mean_anomaly_rad = {'mercury': lambda c: (318.537027 + 4.0923344366 * c * 36525 + 2 / 3e6 * c * c) % 360 * deg_to_rad,
+                     'venus': lambda c: (311.505478 + 1.602130189 * c * 36525 + 0.001286056 * c * c) % 360 * deg_to_rad,
+                     'earth': lambda c: (358.000682 + 0.9856002628 * c * 36525 - 0.0001550000 * c * c
+                                         - 0.0000033333 * c * c * c) % 360 * deg_to_rad,
+                     'mars': lambda c: (169.458720 + 0.5240207716 * c * 36525 + 0.0001825972 * c * c
+                                        + 0.0000011944 * c * c * c) % 360 * deg_to_rad,
+                     'jupiter': lambda c: (302.650461 + 0.0830898769 * c * 36525) % 360 * deg_to_rad,
+                     'saturn': lambda c: (66.251797 + 0.0334442397 * c * 36525) % 360 * deg_to_rad,
+                     'uranus': lambda c: (288.465359 + 0.0117258558 * c * 36525) % 360 * deg_to_rad,
+                     'neptune': lambda c: (150.769275 + 0.0059952644 * c * 36525) % 360 * deg_to_rad,
+                     'pluto': lambda c: (301.687570 + 0.0039892964 * c * 36525) % 360 * deg_to_rad
+                     }
+
+_ephemeris = {'a': _semimajor_axis_km,
+              'e': _eccentricity,
+              'i': _inclination_rad,
+              'O': _long_asc_node_rad,
+              'w': _arg_of_peri_rad,
+              'M': _mean_anomaly_rad}
+
+
+def ephem(elems: list, planets: list, times: np.ndarray) -> np.ndarray:
+    """
+    Get orbital elements from planets are multiple times. The following examples returns semimajor axis, eccentricity,
+    argument of periapsis, and mean anomaly for both Earth and Mars at 26000 and 26200 JD (16 total outputs).
+    Ex:
+        elems = ['a', 'e', 'w', 'M']  # define orbital elements to retrieve
+        planets = ['earth', 'mars']  # define planets for which elements are retrieved
+        times = np.array([26000, 26200]) / 36525  # define times at which elements are retrieved (in Julian century)
+        states = ephem(elems, planets, times)
+    The output has shape (len(elems), len(planets), len(times)) - unless a dimension is one, since np.squeeze is called
+    at the end.
+    :param elems:
+    :param planets:
+    :param times:
+    :return:
+    """
+    return np.squeeze(np.array([planet(times) for elem in list(map(_ephemeris.get, elems))
+                                for planet in list(map(elem.get, planets))], float
+                               ).reshape((len(elems), len(planets), len(times))))
