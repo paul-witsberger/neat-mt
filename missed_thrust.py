@@ -116,6 +116,7 @@ def make_new_bcs(true_final_f: bool = true_final_f) -> (np.ndarray, np.ndarray):
         y0 = keplerian_to_inertial_3d(np.array([a0, e0, i0, w0, om0, f0]), gm=gm)
         yf = keplerian_to_inertial_3d(np.array([af, ef, ifinal, wf, omf, ff]), gm=gm)
     y0 = np.append(y0, m0)
+    yf = yf.ravel()
     return y0, yf
 
 
@@ -357,14 +358,12 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
         # Add first delta v
         y[-2, 3:6] += dv1
         if change_frame:
-            # TODO (1) need to account for the different central body when using min_dv_capture() - it assumes Mars as
-            #  central body - need to make sure units are DIMENSIONALIZED when converting frames, then NONDIMENSINALIZED
-            #  for the integration
-            change_central_body(dv1, v_)
-            y[-2, 3:6] -= r_mars_sun
+            raise NotImplementedError('The ability to change frame has not been implemented in this function.')
+            # change_central_body(dv1, v_)
+            # y[-2, 3:6] -= r_mars_sun
 
         # Compute mass after maneuver
-        m_penultimate = y[-2, -1] / np.exp(dv1_mag * 1000 / g0_ms2 / Isp_chemical) / mu
+        m_penultimate = y[-2, -1] / np.exp(dv1_mag * 1000 / g0_ms2 / isp_chemical) / mu
         y[-2, -1] = m_penultimate * mu
 
         # Set up integration of Lambert arc

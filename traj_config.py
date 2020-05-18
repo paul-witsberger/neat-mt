@@ -5,12 +5,13 @@ from constants import *
 max_generations = 1000
 
 gm = u_sun_km3s2
-n_dim = 2
+n_dim = 3
 assert n_dim == 2 or n_dim == 3
 # Create logical list for indices of 2D components
 if n_dim == 2:
     ind_dim = np.array([True, True, False, True, True, False, False])
 else:
+    # ind_dim = np.array([True, True, False, True, True, False, False])
     ind_dim = np.array([True] * 6 + [False])
 
 # Define initial and final orbits
@@ -91,7 +92,7 @@ else:
     scales_out = np.array([[0, 2 * np.pi], [0, 2 * np.pi], [0, 1]])  # alpha, beta, throttle
 
 # Specify output activation type (NOTE: this does not automatically change with the NEAT config file)
-out_node_scales = np.array([[-1, 1], [-1, 1]])
+out_node_scales = np.array([[-1, 1], [-1, 1], [-1, 1]])
 
 # Optionally specify a set of angle choices, and have an output node for each - categorical classification
 use_multiple_angle_nodes = False

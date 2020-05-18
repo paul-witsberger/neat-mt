@@ -209,7 +209,7 @@ def cross(left: np.ndarray, right: np.ndarray) -> np.ndarray:
     return np.array([x, y, z])
 
 
-@njit
+# @njit
 def inertial_to_keplerian_3d(state: np.ndarray, gm: float = gm) -> np.ndarray:
     """
     Convert a 3D state vector from inertial to Keplerian
@@ -288,7 +288,7 @@ def inertial_to_keplerian_3d(state: np.ndarray, gm: float = gm) -> np.ndarray:
     return np.array([a, e, i, w, om, f])
 
 
-@njit
+# @njit
 def keplerian_to_perifocal_3d(state: np.ndarray, gm: float = gm, mean_or_true: str = 'true') -> np.ndarray:
     """
     Convert a 3D state vector from Keplerian to perifocal
@@ -307,7 +307,7 @@ def keplerian_to_perifocal_3d(state: np.ndarray, gm: float = gm, mean_or_true: s
     return np.array((r_p, v_p)).ravel()
 
 
-@njit
+# @njit
 def keplerian_to_inertial_3d(state: np.ndarray, gm: float = gm, mean_or_true: str = 'true') -> np.ndarray:
     """
     Convert a 3D state vector from Keplerian to inertial
@@ -348,7 +348,7 @@ def keplerian_to_inertial_3d(state: np.ndarray, gm: float = gm, mean_or_true: st
     return np.hstack((r_i, v_i))
 
 
-@njit
+# @njit
 def keplerian_to_perifocal_2d(state: np.ndarray, gm: float = gm, mean_or_true: str = 'true') -> np.ndarray:
     """
     Convert a 2D state vector from Keplerian to perifocal
@@ -367,7 +367,7 @@ def keplerian_to_perifocal_2d(state: np.ndarray, gm: float = gm, mean_or_true: s
     return np.hstack((r_p, v_p))
 
 
-@njit
+# @njit
 def keplerian_to_inertial_2d(state: np.ndarray, gm: float = gm, mean_or_true: str = 'true') -> np.ndarray:
     """
     Convert a 2D state vector from Keplerian to inertial
@@ -376,6 +376,7 @@ def keplerian_to_inertial_2d(state: np.ndarray, gm: float = gm, mean_or_true: st
     :return:
     """
     # Convert to perifocal frame
+    a, e, w, f = state
     state_peri = keplerian_to_perifocal_2d(state, gm=gm, mean_or_true=mean_or_true)
     r_p, v_p = state_peri[:2], state_peri[2:]
     # Construct DCMs
@@ -606,7 +607,7 @@ def c3(psi: float) -> float:
     return res
 
 
-@njit
+# @njit
 def vallado(k: float, r0: np.ndarray, r: np.ndarray, tof: float, short: bool, numiter: int, rtol: float) \
         -> (np.ndarray, np.ndarray):
     """

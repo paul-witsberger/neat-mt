@@ -6,7 +6,7 @@ from nnet import Neurocontroller
 from traj_config import *
 from scipy import integrate
 from eom import eom2BP
-from big_idea import integrate_func_missed_thrust, make_new_bcs, traj_fit_func
+from missed_thrust import integrate_func_missed_thrust, make_new_bcs, traj_fit_func
 from plotter import *
 from orbit_util import period_from_inertial
 import h5py

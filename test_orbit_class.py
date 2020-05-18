@@ -6,7 +6,7 @@ import os
 import traj_config as tc
 from nnet import Neurocontroller
 import boost_tbp
-import big_idea
+import missed_thrust
 import numpy as np
 
 
@@ -82,7 +82,7 @@ class Spacecraft:
         else:
             with open(fname, 'rb') as f:
                 net = pickle.load(f)
-        config_path = os.path.join(os.path.dirname(__file__), 'config_feedforward')
+        config_path = os.path.join(os.path.dirname(__file__), 'config-feedforward')
         config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction, neat.DefaultSpeciesSet,
                              neat.DefaultStagnation, config_path)
         neat_net = neat.nn.FeedForwardNetwork.create(net, config)
@@ -95,8 +95,6 @@ class Trajectory:
                  genome: neat.genome.DefaultGenome = None, save_full_traj: bool = False):
         # TODO can one trajectory have multiple spacecraft, where each spacecraft is evaluated separately?
         self.spacecraft = Spacecraft(dim=dim, genome=genome)
-        self._init_integrator_opts()
-        self._init_times_and_states()
         self._dim = dim
         self._frame = frame
         self._central_body = central_body
@@ -107,6 +105,8 @@ class Trajectory:
         self.dv1 = np.zeros(3, float)
         self.dv2 = np.zeros(3, float)
         self.fitness = None
+        self._init_integrator_opts()
+        self._init_times_and_states()
         self._update_sizes()
         self._update_params(np.zeros(3, float))
 
@@ -172,8 +172,7 @@ class Trajectory:
         self.scaled_times = t / self.tu
         self.unscaled_states = np.empty((tc.num_nodes, 2 * self.dim + 1), float)
         self.scaled_states = np.empty_like(self.unscaled_states, float)
-        self.full_traj = np.empty(((tc.num_nodes - 1) * tc.n_steps + 1))
-        # TODO verify that steps between nodes -2 and -1 aren't different from other steps for full_traj
+        self.full_traj = np.empty(((tc.num_nodes - 1) * tc.n_steps + 1, 2 * self.dim + 2), float)  # TODO verify that steps between nodes -2 and -1 aren't different from other steps for full_traj
 
     def _propagate_main_leg(self, y0: np.ndarray, yf: np.ndarray, include_missed_thrust: bool):
         """
@@ -186,7 +185,7 @@ class Trajectory:
         """
         # Get the indices of the legs that will experience missed thrust
         if include_missed_thrust:
-            miss_ind = big_idea.calculate_missed_thrust_events(self.unscaled_times)
+            miss_ind = missed_thrust.calculate_missed_thrust_events(self.unscaled_times)
         else:
             miss_ind = np.array([]).astype(int)
 
@@ -219,24 +218,25 @@ class Trajectory:
                 # Query NN to get next thrust vector
                 # TODO check if scale is same for constant vs variable power
                 thrust = self.spacecraft.controller(np.hstack((self.unscaled_states[i, tc.ind_dim], yf[tc.ind_dim[:-1]],
-                                                               mass_ratio, time_ratio)), float) \
-                         * self.spacecraft.engine_params['thrust_max_n'] / self.fu
+                                                               mass_ratio, time_ratio)) \
+                         * self.spacecraft.engine_params['thrust_max_n'] / self.fu)
+            # TODO convert thrust from body (VNC?) frame to inertial frame before passing to integrator
+
             self._update_params(thrust)
 
             # propagate from the current state until the next time step
-            traj = self.integrator.prop(self.scaled_states[i].aslist(), self.scaled_times[i:i+2].aslist(), self.params,
+            traj = self.integrator.prop(self.scaled_states[i].tolist(), self.scaled_times[i:i+2].tolist(), self.params,
                                         self.sizes['states'], self.sizes['times'], self.sizes['param'], tc.rtol,
                                         tc.atol, step_size, self.integrator_opts['step_type'],
                                         self.integrator_opts['eom_type'])
 
             # save full trajectory including intermediate states
-            self.full_traj.extend(traj[1:])  # TODO fix this
+            self.full_traj[i * tc.n_steps:(i+1) * tc.n_steps] = traj[1:]  # TODO check mass consumption
 
             # save final state of current leg
             self.scaled_states[i + 1] = np.array(traj[-1])[1:]
             self.unscaled_states[i + 1] = self.scaled_states[i + 1] * self.state_scales
 
-    # TODO Implement post-transfer capture
     def _post_transfer_capture(self, yf: np.ndarray) -> None:
         # Check if final position is "close" to target position - if not, compute a Lambert arc to match target state
         pos_error = np.linalg.norm((self.unscaled_states[-2, :3] - yf[:3]) / self.state_scales[:3])
@@ -276,7 +276,7 @@ class Trajectory:
             params, param_size = [], 0
 
             # Integrate Lambert arc
-            traj = self.integrator.prop(self.scaled_states[-2].aslist(), self.scaled_times[-2:].aslist(), params,
+            traj = self.integrator.prop(self.scaled_states[-2].tolist(), self.scaled_times[-2:].tolist(), params,
                                         state_size, self.sizes['times'], param_size, tc.rtol, tc.atol, step_size,
                                         self.integrator_opts['step_type'], eom_type)
 
@@ -292,7 +292,7 @@ class Trajectory:
 
             # Compute second required delta V to get on to target orbit
             self.unscaled_states[-1, 3:6] += self.dv2
-            self.scaled_states[-1, 3:6] = self.scaled_states / self.state_scales[3:6]
+            self.scaled_states[-1, 3:6] = self.unscaled_states[-1, 3:6] / self.state_scales[3:6]
 
             # Compute mass after maneuver
             m_final = m_penultimate / np.exp(dv2_mag * 1000 / c.g0_ms2 / tc.isp_chemical)
@@ -308,6 +308,8 @@ class Trajectory:
         else:
             # No maneuver
             self.unscaled_states[-1] = self.unscaled_states[-2]
+            self.scaled_states[-1] = self.scaled_states[-2]
+            self.unscaled_times[-1] = self.unscaled_times[-2]
             self.scaled_times[-1] = self.scaled_times[-2]
 
         # Dimensionalize states
@@ -333,7 +335,7 @@ class Trajectory:
         # Define lengths of input vectors to the integrator
         :return:
         """
-        self.sizes = {'states': 2 * self.dim,
+        self.sizes = {'states': 2 * self.dim + 1,
                       'times': 2,
                       'param': 17 if self.spacecraft.engine_params['variable_power'] else 5}
 
@@ -352,7 +354,7 @@ class Trajectory:
         self.fitness = np.ones(tc.num_cases) * np.inf
         for i in range(tc.num_cases):
             # TODO boundary conditions should be based on initial and target planets with a specified time of flight
-            y0, yf = big_idea.make_new_bcs()
+            y0, yf = missed_thrust.make_new_bcs()
             self.propagate(y0, yf)
 
             # Check if integration was terminated early
@@ -370,7 +372,7 @@ class Trajectory:
             t_ratio = self.unscaled_times[-1] / self.unscaled_times[-2]
 
             # Get fitness
-            self.fitness[i], dr, dv = big_idea.traj_fit_func(yf_actual, yf_target, y0, m_ratio, t_ratio)
+            self.fitness[i], dr, dv = missed_thrust.traj_fit_func(yf_actual, yf_target, y0, m_ratio, t_ratio)
 
         # Calculate scalar fitness using one of the following methods
         rdo = False

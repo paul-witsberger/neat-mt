@@ -2,7 +2,7 @@ import os
 import pickle
 import neatfast as neat
 from neatfast import visualize
-from big_idea import eval_traj_neat
+from missed_thrust import eval_traj_neat
 from builder import make_last_traj, make_neat_network_diagram
 from traj_config import max_generations
 
