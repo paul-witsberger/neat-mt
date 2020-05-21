@@ -160,10 +160,18 @@ public:
 
 		// otherwise, rotate thrust vector to inertial frame
 		else {
-			double rotation_angle = atan2(x[4], x[3]);
-			thrust_inertial.assign({ cos(rotation_angle) * thrust_body[0] - sin(rotation_angle) * thrust_body[1],
-								 	 sin(rotation_angle) * thrust_body[0] + cos(rotation_angle) * thrust_body[1],
-								 	 0.0});
+			// double rotation_angle = atan2(x[4], x[3]);
+			// thrust_inertial.assign({ cos(rotation_angle) * thrust_body[0] - sin(rotation_angle) * thrust_body[1],
+								 	 // sin(rotation_angle) * thrust_body[0] + cos(rotation_angle) * thrust_body[1],
+								 	 // 0.0});
+
+			double psi, theta, phi;
+			psi = 0.0;
+			theta = 0.0;
+			phi = 0.0;
+			thrust_inertial.assign({ (cos(psi) * cos(phi) - sin(psi) * sin(phi) * cos(theta)) * thrust_body[0] + (cos(psi) * sin(phi) + sin(psi) * cos(theta) * cos(phi)) * thrust_body[1] + (sin(psi) * sin(theta)) * thrust_body[2] },
+								   {-(sin(psi) * cos(phi) - cos(psi) * sin(phi) * cos(theta)) * thrust_body[0] - (sin(psi) * sin(phi) + cos(psi) * cos(theta) * cos(phi)) * thrust_body[1] + (cos(psi) * sin(theta)) * thrust_body[2] },
+								   {                                  (sin(theta) * sin(phi)) * thrust_body[0] -                                  (sin(theta) * cos(phi)) * thrust_body[1] +            (cos(theta)) * thrust_body[2] })
 		}
 
 		// EOMs (3 velocity, 3 accel w/ grav and thrust, 1 mass)

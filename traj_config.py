@@ -134,8 +134,9 @@ missed_thrust_tbe_factor = 1.  # make less than one for events to be more freque
 missed_thrust_rd_factor = 1.  # make greater than one for events to be more severe
 
 # Specify the indices of the input array that should be used
-# input_indices = np.array([0, 1, 2, 3, 8, 9])
-input_indices = None
+# input_indices = np.array([0, 1, 2, 3, 8, 9])  # ignore target, 2D [6 nodes]
+input_indices = np.array([0, 1, 3, 5, 6, 7, 9, 11, 12, 13])  # ignore Z components, 3D [10 nodes]
+# input_indices = None
 
 # Specify if a Lambert arc should be computed to match the final state
 do_terminal_lambert_arc = True
