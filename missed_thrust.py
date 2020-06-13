@@ -5,6 +5,7 @@ from traj_config import *
 from orbit_util import *
 import os
 import pickle
+import jplephem
 
 
 def eval_traj_neat(genome: neat.genome.DefaultGenome, config: neat.config.Config) -> float:
@@ -118,6 +119,16 @@ def make_new_bcs(true_final_f: bool = true_final_f) -> (np.ndarray, np.ndarray):
     y0 = np.append(y0, m0)
     yf = yf.ravel()
     return y0, yf
+
+
+def compute_bcs() -> (np.ndarray, np.ndarray):
+    elems = ['a', 'e', 'i', 'O', 'w', 'M']
+    planets = [init_body, target_body]
+    times = np.array([t0, tf])
+    states_coe = ephem(elems, planets, times)
+    state_0_i = keplerian_to_inertial_3d(states_coe[0], mean_or_true='mean')
+    state_f_i = keplerian_to_inertial_3d(states_coe[1], mean_or_true='mean')
+    return state_0_i, state_f_i
 
 
 def evalTraj(W: np.ndarray, params: list) -> float:
@@ -553,3 +564,7 @@ def run_margins():
 
 if __name__ == '__main__':
     run_margins()
+
+
+# TODO look into rendezvous with a moving target - e.g. Gateway, hyperbolic rendezvous,
+#      GEO/LEO non-thrusting, GEO/LEO active avoidance

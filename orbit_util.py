@@ -1,9 +1,11 @@
 import numpy as np
-from math import gamma, cos, sin
-from traj_config import gm, year_to_sec
+from numpy import cos, sin
+from math import gamma
+from traj_config import gm
 from numba import njit
 from copy import copy
-from constants import ephem, sec_to_day, reference_date_jd1950, day_to_jc
+from constants import ephem, sec_to_day, year_to_sec, reference_date_jd1950, day_to_jc, u_earth_km3s2, r_earth_km
+from typing import Union
 
 
 @njit
@@ -195,7 +197,7 @@ def inertial_to_keplerian_2d(state: np.ndarray, gm: float = gm) -> np.ndarray:
     return np.array([a, e, w, ta])
 
 
-@njit
+# @njit
 def cross(left: np.ndarray, right: np.ndarray) -> np.ndarray:
     """
     Compute the cross product of two vectors.
@@ -288,26 +290,26 @@ def inertial_to_keplerian_3d(state: np.ndarray, gm: float = gm) -> np.ndarray:
     return np.array([a, e, i, w, om, f])
 
 
-# @njit
-def keplerian_to_perifocal_3d(state: np.ndarray, gm: float = gm, mean_or_true: str = 'true') -> np.ndarray:
+@njit
+def keplerian_to_perifocal_3d(state: np.ndarray, gm: float = gm) -> tuple:
     """
     Convert a 3D state vector from Keplerian to perifocal
     :param state:
     :param gm:
     :return:
     """
-    if mean_or_true == 'true':
-        a, e, i, w, om, f = state
-    else:
-        a, e, i, w, om, m = state
-        f = np.array([mean_to_true_anomaly(mm, e) for mm in m], float)
+    a, e, i, w, om, f = state[0], state[1], state[2], state[3], state[4], state[5]
     p = a * (1 - e ** 2)
-    r_p = np.array([p * np.cos(f) / (1 + e * np.cos(f)), p * np.sin(f) / (1 + e * np.cos(f)), 0.])
-    v_p = np.array([-np.sqrt(gm / p) * np.sin(f), np.sqrt(gm / p) * (e + np.cos(f)), 0.])
-    return np.array((r_p, v_p)).ravel()
+    r11 = p * np.cos(f) / (1 + e * np.cos(f))
+    r12 = p * np.sin(f) / (1 + e * np.cos(f))
+    r13 = np.zeros(int(np.array(state.shape).prod() / 6))
+    v11 = -np.sqrt(gm / p) * np.sin(f)
+    v12 = np.sqrt(gm / p) * (e + np.cos(f))
+    r_p = np.vstack((r11, r12, r13))
+    v_p = np.vstack((v11, v12, r13))
+    return r_p, v_p
 
 
-# @njit
 def keplerian_to_inertial_3d(state: np.ndarray, gm: float = gm, mean_or_true: str = 'true') -> np.ndarray:
     """
     Convert a 3D state vector from Keplerian to inertial
@@ -316,35 +318,12 @@ def keplerian_to_inertial_3d(state: np.ndarray, gm: float = gm, mean_or_true: st
     :return:
     """
     a, e, i, w, om, f = state
-    state_peri = keplerian_to_perifocal_3d(state, gm=gm, mean_or_true=mean_or_true)
-    r_p, v_p = state_peri[:3], state_peri[3:]
-
-    # Perform 3-1-3 rotation element-wise
-    dcm3_1 = np.zeros((1, 3, 3)) if len(a.shape) == 0 else np.zeros((len(a.shape), 3, 3))
-    dcm1_2 = dcm3_1.copy()
-    dcm3_3 = dcm3_1.copy()
-
-    dcm3_1[:, 0, 0] = np.cos(om)
-    dcm3_1[:, 0, 1] = -np.sin(om)
-    dcm3_1[:, 1, 0] = np.sin(om)
-    dcm3_1[:, 1, 1] = np.cos(om)
-    dcm3_1[:, 2, 2] = 1.
-
-    dcm1_2[:, 0, 0] = 1.
-    dcm1_2[:, 1, 1] = np.cos(i)
-    dcm1_2[:, 1, 2] = -np.sin(i)
-    dcm1_2[:, 2, 1] = np.sin(i)
-    dcm1_2[:, 2, 2] = np.cos(i)
-
-    dcm3_3[:, 0, 0] = np.cos(w)
-    dcm3_3[:, 0, 1] = -np.sin(w)
-    dcm3_3[:, 1, 0] = np.sin(w)
-    dcm3_3[:, 1, 1] = np.cos(w)
-    dcm3_3[:, 2, 2] = 1.
-
-    dcm = np.matmul(np.matmul(dcm3_1, dcm1_2), dcm3_3)
-    r_i = np.matmul(dcm, r_p)
-    v_i = np.matmul(dcm, v_p)
+    if mean_or_true == 'mean':
+        m = f
+        state[5, :] = np.array([mean_to_true_anomaly(mm, e) for mm, e, in zip(m, e)]).T
+    r_p, v_p = keplerian_to_perifocal_3d(state, gm=gm)
+    r_i = euler313(r_p, om, i, w)
+    v_i = euler313(v_p, om, i, w)
     return np.hstack((r_i, v_i))
 
 
@@ -379,22 +358,12 @@ def keplerian_to_inertial_2d(state: np.ndarray, gm: float = gm, mean_or_true: st
     a, e, w, f = state
     state_peri = keplerian_to_perifocal_2d(state, gm=gm, mean_or_true=mean_or_true)
     r_p, v_p = state_peri[:2], state_peri[2:]
-    # Construct DCMs
-    # if len(np.shape(a)) == 0:
+    # Construct DCM
     dcm = np.zeros((2, 2))
     dcm[0, 0] = np.cos(w)
     dcm[0, 1] = -np.sin(w)
     dcm[1, 0] = np.sin(w)
     dcm[1, 1] = np.cos(w)
-    # else:
-    #     dcm = np.zeros((len(np.shape(a)), 2, 2))
-    #     dcm[:, 0, 0] = np.cos(w)
-    #     dcm[:, 0, 1] = -np.sin(w)
-    #     dcm[:, 1, 0] = np.sin(w)
-    #     dcm[:, 1, 1] = np.cos(w)
-    # Rotate radius and velocity vectors
-    # r_i = np.matmul(dcm, r_p)
-    # v_i = np.matmul(dcm, v_p)
     r_i = dcm.dot(r_p)
     v_i = dcm.dot(v_p)
     return np.hstack((r_i, v_i))
@@ -788,6 +757,8 @@ def lambert_min_dv(k: float, state: np.ndarray, state_f: np.ndarray, short: bool
                 low = tof
             else:
                 print('Reached else.')
+                print('dir_last = ' % dir_last)
+                print('dir_last_best = ' % dir_last_best)
 
         last_tof = tof
         count += 1
@@ -1022,7 +993,7 @@ def change_central_body(states: np.ndarray, times: np.ndarray, cur_cb: str, new_
 def mean_to_true_anomaly(m: float, e: float, tol: float = 1e-8) -> float:
     # Assume small eccentricity
     ea_guess = m
-    ea_next = ea_guess
+    # ea_next = ea_guess
     for i in range(20):
         ea_next = ea_guess + (m + e * sin(ea_guess) - ea_guess) / (1 - e * cos(ea_guess))
         diff = ea_next - ea_guess
@@ -1034,6 +1005,21 @@ def mean_to_true_anomaly(m: float, e: float, tol: float = 1e-8) -> float:
         else:
             ea_guess = ea_next
     raise RuntimeError('Newton''s method did not converge.')
+
+
+# @njit
+def euler313(vector: np.ndarray, psi: float, theta: float, phi: float) -> np.ndarray:
+    dcm = np.array([[  cos(psi) * cos(phi) - sin(psi) * sin(phi) * cos(theta),  cos(psi) * sin(phi) + sin(psi) * cos(theta) * cos(phi), sin(psi) * sin(theta) ],
+                    [ -sin(psi) * cos(phi) - cos(psi) * sin(phi) * cos(theta), -sin(psi) * sin(phi) + cos(psi) * cos(theta) * cos(phi), cos(psi) * sin(theta) ],
+                    [                                   sin(theta) * sin(phi),                                  -sin(theta) * cos(phi),            cos(theta) ]]).T
+    return np.matmul(dcm, vector)
+
+
+def euler1(vector: np.ndarray, theta: float) -> np.ndarray:
+    dcm = np.array([[1,              0,             0],
+                    [0,  np.cos(theta), np.sin(theta)],
+                    [0, -np.sin(theta), np.cos(theta)]])
+    return np.matmul(dcm, vector)
 
 
 if __name__ == "__main__":
@@ -1055,7 +1041,7 @@ if __name__ == "__main__":
         print(r3)
         print(v3)
 
-    test3 = True
+    test3 = False
     if test3:
         m = 135 * np.pi / 180
         e = 0.1
@@ -1064,3 +1050,39 @@ if __name__ == "__main__":
         # Quick and dirty approximation
         ta2 = m + (2 * e - 0.25 * e ** 3) * sin(m) + 1.25 * e ** 2 * sin(2 * m) + 13 / 12 * e ** 3 * sin(3 * m)
         print(ta2)
+
+    test4 = True
+    if test4:
+        vec = np.array([1, 0, 0], float)
+        a = np.pi / 6
+        print(euler313(vec, a, 0, 0))
+        print(euler313(vec, 0, a, 0))
+        print(euler313(vec, 0, 0, a))
+        print(euler313(vec, a, a, 0))
+        print(euler313(vec, a, 0, a))
+        print(euler313(vec, 0, a, a))
+        print(euler313(vec, a, a, a))
+
+    test5 = False
+    if test5:
+        gm = u_earth_km3s2
+        n = 15.4891975521933 * 2 * np.pi / 24 / 3600  # rad / sec
+        a = (gm / n / n) ** (1. / 3)  # km
+        e = 0.0005270  # -
+        i = 51.6460 * np.pi / 180 # deg
+        w = 61.9928 * np.pi / 180  # deg
+        om = 33.2488 * np.pi / 180  # deg
+        m = 83.3154 * np.pi / 180  # deg
+        state_i = np.squeeze(keplerian_to_inertial_3d(np.array([a, e, i, w, om, m]), gm=gm, mean_or_true='mean'))
+        # state_p = np.squeeze(keplerian_to_perifocal_3d(np.array([a, e, i, w, om, m]), gm=gm, mean_or_true='mean'))
+        # state_i = np.hstack((euler313(state_p[:3], om, i, w), euler313(state_p[3:], om, i, w)))
+        print('Inertial:')
+        print(state_i)
+        print()
+
+        r = np.linalg.norm(state_i[:3])
+        lat = np.arcsin(state_i[2] / r) * 180 / np.pi
+        lon = np.arctan2(state_i[1], state_i[0]) * 180 / np.pi
+        alt = (r - 6378.135) * 1000
+        print('LLA')
+        print([lat, lon, alt])

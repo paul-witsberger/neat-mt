@@ -22,7 +22,6 @@ _frames_conversions = {
 _const_thrust_engine_params = {
     'thrust_max_n': 1.2 * 1e-3,
     'isp_s': 2780,
-    'thrust_n': 1.2,
     'variable_power': False
 }
 
@@ -109,6 +108,7 @@ class Trajectory:
         self._init_times_and_states()
         self._update_sizes()
         self._update_params(np.zeros(3, float))
+        print('Finished initializing')
 
     @property
     def dim(self) -> int:
@@ -170,9 +170,9 @@ class Trajectory:
         t = np.append(t, t[-1])
         self.unscaled_times = t
         self.scaled_times = t / self.tu
-        self.unscaled_states = np.empty((tc.num_nodes, 2 * self.dim + 1), float)
+        self.unscaled_states = np.empty((tc.num_nodes + 1, 2 * self.dim + 1), float)
         self.scaled_states = np.empty_like(self.unscaled_states, float)
-        self.full_traj = np.empty(((tc.num_nodes - 1) * tc.n_steps + 1, 2 * self.dim + 2), float)  # TODO verify that steps between nodes -2 and -1 aren't different from other steps for full_traj
+        self.full_traj = np.empty((tc.num_nodes * tc.n_steps + 1, 2 * self.dim + 2), float)  # TODO verify that steps between nodes -2 and -1 aren't different from other steps for full_traj
 
     def _propagate_main_leg(self, y0: np.ndarray, yf: np.ndarray, include_missed_thrust: bool):
         """

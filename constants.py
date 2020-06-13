@@ -6,10 +6,11 @@ from numba import njit
 solar_constant = np.array(1.361)
 m_earth_kg = np.array(5.9723e24)
 g0_ms2 = np.array(9.80665)
-per_earth_day = np.array(365.256)
+per_earth_day = np.array(365.242198781)  # tropical year
 j2_earth = np.array(1.0826269e-3)
 j3_earth = np.array(-2.5323e-6)
 j4_earth = np.array(-1.6204e-6)
+f_jd1950 = np.array(358.203475)
 
 # Unit conversions
 sec_to_min = np.array(1 / 60)
@@ -146,7 +147,7 @@ vp_earth_kms = np.array(30.29)
 va_earth_kms = np.array(29.29)
 
 # Other
-reference_date_jd1950 = np.array(2433282.5)
+reference_date_jd1950 = np.array(2433282.423357)
 reference_date_jd2000 = np.array(2451545.0)
 day_to_jc = 1. / 36525  # day to Julian century
 
@@ -229,7 +230,7 @@ _ephemeris = {'a': _semimajor_axis_km,
 
 def ephem(elems: list, planets: list, times: np.ndarray) -> np.ndarray:
     """
-    Get orbital elements from planets are multiple times. The following examples returns semimajor axis, eccentricity,
+    Get orbital elements from planets at multiple times. The following example returns semimajor axis, eccentricity,
     argument of periapsis, and mean anomaly for both Earth and Mars at 26000 and 26200 JD (16 total outputs).
     Ex:
         elems = ['a', 'e', 'w', 'M']  # define orbital elements to retrieve
@@ -238,6 +239,9 @@ def ephem(elems: list, planets: list, times: np.ndarray) -> np.ndarray:
         states = ephem(elems, planets, times)
     The output has shape (len(elems), len(planets), len(times)) - unless a dimension is one, since np.squeeze is called
     at the end.
+    The options for elems are ['a', 'e', 'i', 'O', 'w', 'M']
+    The options for planets are ['mercury', 'venus', 'earth', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto']
+    Times is an array of one or more times in Julian century
     :param elems:
     :param planets:
     :param times:

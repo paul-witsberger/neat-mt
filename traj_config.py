@@ -1,10 +1,12 @@
 # TODO look into adding textures to a sphere to make a planet
 
-from constants import *
+import numpy as np
+import constants as c
+from datetime import datetime
 
 max_generations = 1000
 
-gm = u_sun_km3s2
+gm = c.u_sun_km3s2
 n_dim = 3
 assert n_dim == 2 or n_dim == 3
 # Create logical list for indices of 2D components
@@ -16,19 +18,19 @@ else:
 
 # Define initial and final orbits
 # Initial orbit parameters
-a0_max, a0_min = a_earth_km, a_earth_km
-e0_max, e0_min = e_earth, e_earth
+a0_max, a0_min = c.a_earth_km, c.a_earth_km
+e0_max, e0_min = c.e_earth, c.e_earth
 i0_max, i0_min = 0, 0
-w0_max, w0_min = lp_earth_rad, lp_earth_rad
+w0_max, w0_min = c.lp_earth_rad, c.lp_earth_rad
 om0_max, om0_min = 0, 0
 f0_ref = 259.7 * np.pi / 180
 # f0_max, f0_min = 274.6 * np.pi / 180, 245.3 * np.pi / 180
 f0_max, f0_min = f0_ref, f0_ref
 # Final orbit parameters
-af_max, af_min = a_mars_km, a_mars_km
-ef_max, ef_min = e_mars, e_mars
+af_max, af_min = c.a_mars_km, c.a_mars_km
+ef_max, ef_min = c.e_mars, c.e_mars
 if_max, if_min = 0, 0
-wf_max, wf_min = lp_mars_rad, lp_mars_rad
+wf_max, wf_min = c.lp_mars_rad, c.lp_mars_rad
 omf_max, omf_min = 0, 0
 ff_ref = 1 * np.pi / 180
 # ff_max, ff_min = 10.5 * np.pi / 180, -8.5 * np.pi / 180
@@ -41,6 +43,12 @@ elliptical_final = True if ef_max > 0 else False
 init_body = 'earth'
 target_body = 'mars'
 central_body = 'sun'
+t0_str = '2025 Jan 01 00:00:00'
+tf_str = '2028 Jan 01 00:00:00'
+fmt = '%Y %b %d %H:%M:%S'
+ordinal_to_julian = 1721424.5
+t0 = datetime.strptime(t0_str, fmt).toordinal() + ordinal_to_julian
+tf = datetime.strptime(tf_str, fmt).toordinal() + ordinal_to_julian
 
 # Specify spacecraft and engine parameters
 m_dry = 10000
@@ -51,7 +59,7 @@ variable_power = False
 if variable_power:
     power_min, power_max = 3.4, 12.5  # kW
     solar_array_m2 = 1  # m^2
-    power_reference = solar_constant * solar_array_m2  # kW, power available at 1 AU
+    power_reference = c.solar_constant * solar_array_m2  # kW, power available at 1 AU
     thrust_power_coef = np.array([-363.67, 225.49, -21.475, 0.7943, 0]) / 1000
     isp_power_coef = np.array([2274.5, -319.39, 61.817, -2.6802, 0])
     T_max_kN = thrust_power_coef * np.array([1, power_max, power_max ** 2, power_max ** 3, power_max ** 4]) * 1e-3
@@ -63,11 +71,11 @@ isp_chemical = 370  # for the final correction burns
 
 # Define time of flight
 t0 = 0.
-tf = 1000 * day_to_sec
+tf = 1000 * c.day_to_sec
 
 # Define scales for the state vectors to non-dimensionalize later
 input_frame = 'kep'  # 'kep', 'mee', 'car'
-r_scale, v_scale = a_earth_km, vp_earth_kms
+r_scale, v_scale = c.a_earth_km, c.vp_earth_kms
 if input_frame == 'kep':
     if n_dim == 2:
         scales_in = np.array([r_scale, 1, np.pi, np.pi])
@@ -115,7 +123,7 @@ num_outages = 0
 
 # Choose to add a penalty for going too close to the central body in the fitness function
 rp_penalty = True
-min_allowed_rp = a_earth_km * 0.95
+min_allowed_rp = c.a_earth_km * 0.95
 rp_penalty_multiplier = 10000
 
 # Choose to add a penalty for not thrusting at all (just staying in initial orbit)
@@ -125,8 +133,8 @@ no_thrust_penalty = True
 big_penalty = 10000
 
 # Choose maximum energy to allow before stopping integration
-max_energy = - u_sun_km3s2 / 2 / max(a0_max, af_max) * 0.8
-min_energy = - u_sun_km3s2 / 2 / min(a0_min, af_min) * 1.2
+max_energy = - c.u_sun_km3s2 / 2 / max(a0_max, af_max) * 0.8
+min_energy = - c.u_sun_km3s2 / 2 / min(a0_min, af_min) * 1.2
 
 # Choose whether missed thrust events occur or not, and scale time-between-events and recovery-duration
 missed_thrust_allowed = True
