@@ -40,16 +40,6 @@ true_final_f = False
 elliptical_initial = True if e0_max > 0 else False
 elliptical_final = True if ef_max > 0 else False
 
-init_body = 'earth'
-target_body = 'mars'
-central_body = 'sun'
-t0_str = '2025 Jan 01 00:00:00'
-tf_str = '2028 Jan 01 00:00:00'
-fmt = '%Y %b %d %H:%M:%S'
-ordinal_to_julian = 1721424.5
-t0 = datetime.strptime(t0_str, fmt).toordinal() + ordinal_to_julian
-tf = datetime.strptime(tf_str, fmt).toordinal() + ordinal_to_julian
-
 # Specify spacecraft and engine parameters
 m_dry = 10000
 m_prop = 3000
@@ -68,10 +58,6 @@ else:
     T_max_kN = 1.2 * 1e-3  # 2 x HERMeS engines with 37.5 kW  # 21.8 mg/s for one thruster
     Isp = 2780
 isp_chemical = 370  # for the final correction burns
-
-# Define time of flight
-t0 = 0.
-tf = 1000 * c.day_to_sec
 
 # Define scales for the state vectors to non-dimensionalize later
 input_frame = 'kep'  # 'kep', 'mee', 'car'
@@ -117,10 +103,6 @@ atol = 1e-9       # absolute tolerance
 num_nodes = 200   # number of thrust updates
 n_steps = 20      # substeps between two nodes
 
-# Specify missed thrust cases
-num_cases = 6
-num_outages = 0
-
 # Choose to add a penalty for going too close to the central body in the fitness function
 rp_penalty = True
 min_allowed_rp = c.a_earth_km * 0.95
@@ -137,16 +119,41 @@ max_energy = - c.u_sun_km3s2 / 2 / max(a0_max, af_max) * 0.8
 min_energy = - c.u_sun_km3s2 / 2 / min(a0_min, af_min) * 1.2
 
 # Choose whether missed thrust events occur or not, and scale time-between-events and recovery-duration
-missed_thrust_allowed = True
+missed_thrust_allowed = False
 missed_thrust_tbe_factor = 1.  # make less than one for events to be more frequent
 missed_thrust_rd_factor = 1.  # make greater than one for events to be more severe
 
+# Specify missed thrust cases
+num_cases = 1
+num_outages = 0
+
 # Specify the indices of the input array that should be used
 # input_indices = np.array([0, 1, 2, 3, 8, 9])  # ignore target, 2D [6 nodes]
-input_indices = np.array([0, 1, 3, 5, 6, 7, 9, 11, 12, 13])  # ignore Z components, 3D [10 nodes]
+input_indices = np.array([0, 1, 3, 4, 6, 7, 9, 10, 12, 13])  # ignore Z components, 3D [10 nodes]
 # input_indices = None
 
 # Specify if a Lambert arc should be computed to match the final state
-do_terminal_lambert_arc = True
+do_terminal_lambert_arc = False
 terminal_integration_steps = 50
 position_tol = 0.1  # outer non-dimensional position
+
+# Define initial and final bodies and times
+init_body = 'earth'
+target_body = 'mars'
+central_body = 'sun'
+t0_str = '2025 Jan 01 00:00:00'
+tf_str = '2028 Jan 01 00:00:00'
+fmt = '%Y %b %d %H:%M:%S'
+ordinal_to_julian = 1721424.5
+t0 = datetime.strptime(t0_str, fmt).toordinal() + ordinal_to_julian
+tf = datetime.strptime(tf_str, fmt).toordinal() + ordinal_to_julian
+times = np.linspace(t0, tf, num_nodes)
+times_jd1950_jc = (times - c.reference_date_jd1950) / 36525
+tf = (tf - t0) * c.day_to_sec
+t0 = 0
+
+# Define scale units for distance, time, mass and force
+du = max(a0_max, af_max)
+tu = (du ** 3 / gm) ** 0.5
+mu = m0
+fu = mu * du / tu / tu

@@ -1,14 +1,14 @@
 from constants import *
 from scipy.integrate import solve_ivp
 import matplotlib.pyplot as plt
-from traj_config import gm
+from traj_config import gm, n_dim
 
 
 def eom2BP(t: float, x: np.ndarray, u: float=gm) -> np.ndarray:
     x_dot = np.zeros(x.shape)
-    r = np.sqrt(np.sum(np.square(x[0:2])))
-    x_dot[0:2] = x[2:]
-    x_dot[2:] = -u / r**3 * x[0:2]
+    r = np.sqrt(np.sum(np.square(x[0:n_dim])))
+    x_dot[0:n_dim] = x[n_dim:]
+    x_dot[n_dim:] = -u / r**3 * x[0:n_dim]
     return x_dot
 
 

@@ -75,7 +75,7 @@ def coe4_from_rv(r_vec: np.ndarray, v_vec: np.ndarray, gm: float = gm) -> np.nda
     return coe
 
 
-@njit
+# @njit
 def period_from_inertial(state: np.ndarray, gm: float = gm, max_time_sec: float = 10 * year_to_sec) -> float:
     """
     Computes the period of an orbit given its 3D state vector.
@@ -169,7 +169,7 @@ def inertial_to_local_2d(state: np.ndarray) -> np.ndarray:
     return np.array([r, v, th, al])
 
 
-# @njit
+@njit
 def inertial_to_keplerian_2d(state: np.ndarray, gm: float = gm) -> np.ndarray:
     """
     Convert a 2D state vector from inertial to Keplerian
@@ -197,7 +197,7 @@ def inertial_to_keplerian_2d(state: np.ndarray, gm: float = gm) -> np.ndarray:
     return np.array([a, e, w, ta])
 
 
-# @njit
+@njit
 def cross(left: np.ndarray, right: np.ndarray) -> np.ndarray:
     """
     Compute the cross product of two vectors.
@@ -221,17 +221,17 @@ def inertial_to_keplerian_3d(state: np.ndarray, gm: float = gm) -> np.ndarray:
     """
     r_vec, v_vec = state[:3], state[3:]
     tol = 1e-8
-    r = np.linalg.norm(r_vec)
-    v = np.linalg.norm(v_vec)
+    r = mag3(r_vec)
+    v = mag3(v_vec)
     h_vec = cross(r_vec, v_vec)
-    h = np.linalg.norm(h_vec)
+    h = mag3(h_vec)
     k_vec = np.array([0, 0, 1])
     n_vec = cross(k_vec, h_vec)
-    n = np.linalg.norm(n_vec)
+    n = mag3(n_vec)
 
     # Eccentricity
     e_vec =  ((v ** 2 - gm / r) * r_vec - np.dot(r_vec, v_vec) * v_vec) / gm
-    e = np.linalg.norm(e_vec)
+    e = mag3(e_vec)
     eps = v ** 2 / 2 - gm / r
 
     # Semi-major axis
@@ -290,7 +290,6 @@ def inertial_to_keplerian_3d(state: np.ndarray, gm: float = gm) -> np.ndarray:
     return np.array([a, e, i, w, om, f])
 
 
-@njit
 def keplerian_to_perifocal_3d(state: np.ndarray, gm: float = gm) -> tuple:
     """
     Convert a 3D state vector from Keplerian to perifocal
@@ -300,11 +299,11 @@ def keplerian_to_perifocal_3d(state: np.ndarray, gm: float = gm) -> tuple:
     """
     a, e, i, w, om, f = state[0], state[1], state[2], state[3], state[4], state[5]
     p = a * (1 - e ** 2)
-    r11 = p * np.cos(f) / (1 + e * np.cos(f))
-    r12 = p * np.sin(f) / (1 + e * np.cos(f))
+    r11 = p * cos(f) / (1 + e * cos(f))
+    r12 = p * sin(f) / (1 + e * cos(f))
     r13 = np.zeros(int(np.array(state.shape).prod() / 6))
-    v11 = -np.sqrt(gm / p) * np.sin(f)
-    v12 = np.sqrt(gm / p) * (e + np.cos(f))
+    v11 = -np.sqrt(gm / p) * sin(f)
+    v12 = np.sqrt(gm / p) * (e + cos(f))
     r_p = np.vstack((r11, r12, r13))
     v_p = np.vstack((v11, v12, r13))
     return r_p, v_p
@@ -320,14 +319,16 @@ def keplerian_to_inertial_3d(state: np.ndarray, gm: float = gm, mean_or_true: st
     a, e, i, w, om, f = state
     if mean_or_true == 'mean':
         m = f
-        state[5, :] = np.array([mean_to_true_anomaly(mm, e) for mm, e, in zip(m, e)]).T
+        if len(state.shape) > 1:
+            state[5, :] = np.array([mean_to_true_anomaly(mm, ee) for mm, ee, in zip(m, e)]).T
+        else:
+            state[5] = mean_to_true_anomaly(m, e)
     r_p, v_p = keplerian_to_perifocal_3d(state, gm=gm)
     r_i = euler313(r_p, om, i, w)
     v_i = euler313(v_p, om, i, w)
     return np.hstack((r_i, v_i))
 
 
-# @njit
 def keplerian_to_perifocal_2d(state: np.ndarray, gm: float = gm, mean_or_true: str = 'true') -> np.ndarray:
     """
     Convert a 2D state vector from Keplerian to perifocal
@@ -346,7 +347,6 @@ def keplerian_to_perifocal_2d(state: np.ndarray, gm: float = gm, mean_or_true: s
     return np.hstack((r_p, v_p))
 
 
-# @njit
 def keplerian_to_inertial_2d(state: np.ndarray, gm: float = gm, mean_or_true: str = 'true') -> np.ndarray:
     """
     Convert a 2D state vector from Keplerian to inertial
@@ -386,10 +386,10 @@ def keplerian_to_mee_3d(state: np.ndarray) -> np.ndarray:
     ta = fix_angle(ta, upper_bound=2*np.pi, lower_bound=0.)
     # Convert to MEE
     p = a * (1 - e ** 2)
-    f = e * np.cos(w + om)
-    g = e * np.sin(w + om)
-    h = np.tan(i / 2) * np.cos(om)
-    k = np.tan(i / 2) * np.sin(om)
+    f = e * cos(w + om)
+    g = e * sin(w + om)
+    h = np.tan(i / 2) * cos(om)
+    k = np.tan(i / 2) * sin(om)
     L = om + w + ta
     return np.array([p, f, g, h, k, L])
 
@@ -425,12 +425,12 @@ def rotate_vnc_to_inertial_3d(vec: np.ndarray, state: np.ndarray) -> np.ndarray:
     :return:
     """
     r_vec, v_vec = state[:3], state[3:6]    # radius and velocity vectors
-    v_hat = v_vec / np.linalg.norm(v_vec)   # velocity unit vector
+    v_hat = v_vec / mag3(v_vec)   # velocity unit vector
     h_vec = cross(r_vec, v_vec)             # angular momentum vector
-    n_hat = h_vec / np.linalg.norm(h_vec)   # angular momentum unit vector; also, normal unit vector
+    n_hat = h_vec / mag3(h_vec)   # angular momentum unit vector; also, normal unit vector
     c_hat = cross(v_hat, n_hat)             # co-normal unit vector
-    dcm = np.vstack((v_hat, n_hat, c_hat))  # direction cosine matrix
-    return np.matmul(dcm, vec)
+    dcm = np.vstack((v_hat, n_hat, c_hat)).T  # direction cosine matrix
+    return np.dot(dcm, vec)
 
 
 @njit
@@ -1007,12 +1007,11 @@ def mean_to_true_anomaly(m: float, e: float, tol: float = 1e-8) -> float:
     raise RuntimeError('Newton''s method did not converge.')
 
 
-# @njit
 def euler313(vector: np.ndarray, psi: float, theta: float, phi: float) -> np.ndarray:
     dcm = np.array([[  cos(psi) * cos(phi) - sin(psi) * sin(phi) * cos(theta),  cos(psi) * sin(phi) + sin(psi) * cos(theta) * cos(phi), sin(psi) * sin(theta) ],
                     [ -sin(psi) * cos(phi) - cos(psi) * sin(phi) * cos(theta), -sin(psi) * sin(phi) + cos(psi) * cos(theta) * cos(phi), cos(psi) * sin(theta) ],
                     [                                   sin(theta) * sin(phi),                                  -sin(theta) * cos(phi),            cos(theta) ]]).T
-    return np.matmul(dcm, vector)
+    return np.matmul(dcm, vector.T.reshape(-1, 3, 1)).squeeze()
 
 
 def euler1(vector: np.ndarray, theta: float) -> np.ndarray:
@@ -1051,10 +1050,10 @@ if __name__ == "__main__":
         ta2 = m + (2 * e - 0.25 * e ** 3) * sin(m) + 1.25 * e ** 2 * sin(2 * m) + 13 / 12 * e ** 3 * sin(3 * m)
         print(ta2)
 
-    test4 = True
+    test4 = False
     if test4:
         vec = np.array([1, 0, 0], float)
-        a = np.pi / 6
+        a = np.pi / 2
         print(euler313(vec, a, 0, 0))
         print(euler313(vec, 0, a, 0))
         print(euler313(vec, 0, 0, a))
@@ -1086,3 +1085,10 @@ if __name__ == "__main__":
         alt = (r - 6378.135) * 1000
         print('LLA')
         print([lat, lon, alt])
+
+    test6 = True
+    if test6:
+        vec_vnc = np.array([1, 0, 0], float)
+        state = np.array([1e8, 0, 0, 0, 29, 0], float)
+        vec_i = rotate_vnc_to_inertial_3d(vec_vnc, state)
+        print(vec_i)

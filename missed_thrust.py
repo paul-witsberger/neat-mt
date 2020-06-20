@@ -2,7 +2,9 @@ from nnet import Neurocontroller
 import boost_tbp
 import neatfast as neat
 from traj_config import *
-from orbit_util import *
+from orbit_util import keplerian_to_inertial_2d, keplerian_to_inertial_3d, inertial_to_keplerian_3d, fix_angle, \
+    inertial_to_keplerian_2d, lambert_min_dv, min_dv_capture, mag3
+from constants import au_to_km, ephem, g0_ms2, u_mars_km3s2, r_mars_km, year_to_sec, day_to_sec
 import os
 import pickle
 import jplephem
@@ -55,7 +57,7 @@ def eval_traj_neat(genome: neat.genome.DefaultGenome, config: neat.config.Config
         t_ratio = ti[-1] / ti[-2]
 
         # Get fitness
-        f[i], dr, dv = traj_fit_func(yf_actual, yf_target, y0, m_ratio, t_ratio)
+        f[i], dr, dv = traj_fit_func(yf_actual, yf_target, y0[:6], m_ratio, t_ratio)
 
     # Calculate scalar fitness
     rdo = False
@@ -122,12 +124,18 @@ def make_new_bcs(true_final_f: bool = true_final_f) -> (np.ndarray, np.ndarray):
 
 
 def compute_bcs() -> (np.ndarray, np.ndarray):
+    """
+    Computes the locations of the initial and target bodies at the initial and final times in Cartesian coordinates.
+    The times used are actual dates, and the states are based on analytic ephemeris.
+    :return:
+    """
     elems = ['a', 'e', 'i', 'O', 'w', 'M']
     planets = [init_body, target_body]
-    times = np.array([t0, tf])
+    times = np.array([times_jd1950_jc[0], times_jd1950_jc[-1]])
     states_coe = ephem(elems, planets, times)
-    state_0_i = keplerian_to_inertial_3d(states_coe[0], mean_or_true='mean')
-    state_f_i = keplerian_to_inertial_3d(states_coe[1], mean_or_true='mean')
+    states_coe[2:4, :, :] = np.zeros_like(states_coe[2:4, :, :])
+    state_0_i = keplerian_to_inertial_3d(states_coe[:, 0, 0], mean_or_true='mean')
+    state_f_i = keplerian_to_inertial_3d(states_coe[:, 1, 1], mean_or_true='mean')
     return state_0_i, state_f_i
 
 
@@ -191,7 +199,7 @@ def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float,
         a1, e1, w1, f1 = inertial_to_keplerian_2d(y, gm=gm)
         a2, e2, w2, f2 = inertial_to_keplerian_2d(yf, gm=gm)
     else:
-        a0, e0, i0, w0, om0, f0 = inertial_to_keplerian_3d(y0[:-1], gm=gm)
+        a0, e0, i0, w0, om0, f0 = inertial_to_keplerian_3d(y0[:6], gm=gm)
         a1, e1, i1, w1, om1, f1 = inertial_to_keplerian_3d(y, gm=gm)
         a2, e2, i2, w2, om2, f2 = inertial_to_keplerian_3d(yf, gm=gm)
 
@@ -306,8 +314,9 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
     full_traj = []
     for i in range(len(ti) - 2):
         # Check if orbital energy is within reasonable bounds - terminate integration if not
-        r = np.linalg.norm(y[i, :3])
-        eps = (np.linalg.norm(y[i, 3:6])**2 / 2 - gm / r)
+        r_mag = mag3(y[i, :3])
+        v_mag = mag3(y[i, 3:6])
+        eps = (v_mag * v_mag / 2 - gm / r_mag)
         if (eps > max_energy or eps < min_energy) and not save_full_traj:
             return np.array(0), 0, 0, 0, 0
 
@@ -400,7 +409,7 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
         y[-1, 3:6] += dv2
 
         # Compute mass after maneuver
-        m_final = m_penultimate / np.exp(dv2_mag * 1000 / g0_ms2 / Isp_chemical)
+        m_final = m_penultimate / np.exp(dv2_mag * 1000 / g0_ms2 / isp_chemical)
 
         # Update final mass
         y[-1, -1] = m_final
@@ -563,7 +572,15 @@ def run_margins():
 
 
 if __name__ == '__main__':
-    run_margins()
+    test1 = False
+    if test1:
+        run_margins()
+
+    test2 = True
+    if test2:
+        bc0, bcf = compute_bcs()
+        print(bc0)
+        print(bcf)
 
 
 # TODO look into rendezvous with a moving target - e.g. Gateway, hyperbolic rendezvous,

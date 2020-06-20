@@ -90,6 +90,7 @@ class Neurocontroller():
                 _state = np.hstack((curr, targ, _state[-2:]))
         else:
             if input_frame == 'kep':  # 3D Keplerian
+                # TODO is there a way to avoid converting inertial to keplerian each step?
                 curr = inertial_to_keplerian_3d(_state[:n_dim * 2], gm=gm)
                 targ = inertial_to_keplerian_3d(_state[n_dim * 2:n_dim * 4], gm=gm)
                 _state = np.hstack((curr, targ, _state[-2:]))
@@ -115,7 +116,7 @@ class Neurocontroller():
             thrust = np.hstack((np.cos(alpha), np.sin(alpha), 0)) * throttle
         else:
             alpha, beta, throttle = self.scaleOutputs(out)
-            thrust = np.hstack((np.cos(alpha) * np.cos(beta), np.sin(alpha) * np.cos(beta), np.sin(beta)))
+            thrust = np.hstack((np.cos(alpha) * np.cos(beta), np.sin(alpha) * np.cos(beta), np.sin(beta)))  # TODO use this info to properly apply thrust
             # See 532 Notes, Page JS_3Dex 2-3 for reference on VNC frame
         return thrust
 

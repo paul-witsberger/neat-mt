@@ -43,14 +43,15 @@ _variable_thrust_engine_params['isp_s'] = _variable_thrust_engine_params['isp_po
 
 class Spacecraft:
     def __init__(self, dim: float = 3, state: list = None, mass: float = None, engine_params: dict = None,
-                 genome: neat.genome.DefaultGenome = None):
+                 genome: neat.genome.DefaultGenome = None, skip_controller: bool = False):
         assert state is None or (len(state) == 4 and dim == 2) or (len(state) == 6 and dim == 3)
         self._state = state if state is not None else [0.] * 6
         self._mass = mass if mass is not None else 0.
         self.engine_params = engine_params if engine_params is not None else _const_thrust_engine_params
         self.dry_mass = tc.m_dry
         self.controller = None
-        self.set_controller(genome=genome)
+        if not skip_controller:
+            self.set_controller(genome=genome)
 
     @property
     def state(self) -> list:
@@ -91,9 +92,9 @@ class Spacecraft:
 
 class Trajectory:
     def __init__(self, central_body: str = 'sun', frame: str = 'kep', dim: int = tc.n_dim,
-                 genome: neat.genome.DefaultGenome = None, save_full_traj: bool = False):
+                 genome: neat.genome.DefaultGenome = None, save_full_traj: bool = False, skip_controller: bool = False):
         # TODO can one trajectory have multiple spacecraft, where each spacecraft is evaluated separately?
-        self.spacecraft = Spacecraft(dim=dim, genome=genome)
+        self.spacecraft = Spacecraft(dim=dim, genome=genome, skip_controller=skip_controller)
         self._dim = dim
         self._frame = frame
         self._central_body = central_body
@@ -108,7 +109,6 @@ class Trajectory:
         self._init_times_and_states()
         self._update_sizes()
         self._update_params(np.zeros(3, float))
-        print('Finished initializing')
 
     @property
     def dim(self) -> int:
@@ -133,6 +133,18 @@ class Trajectory:
                                                               self.central_body, value)
         self.scaled_states[:, :-1] = self.unscaled_states[:, :-1] / self.state_scales[:-1]
         self._central_body = value
+
+    # TODO update frame conversion formats - maybe make a wrapper that interprets the strings?
+    def convert_frame_to(self, new_frame: str) -> None:
+        """
+        Change the state vector to a different frame.
+        :param new_frame:
+        :return:
+        """
+        if not new_frame == self.frame:
+            self._state = _frames_conversions[self._frame + new_frame + str(self._dim)](self._state,
+                                                                                        self._central_body)
+            self._frame = new_frame
 
     def _init_integrator_opts(self):
         """
@@ -161,16 +173,18 @@ class Trajectory:
         :param spacing:
         :return:
         """
+        t0 = tc.t0
+        tf = tc.tf
         if spacing == 'linear':
-            t = np.linspace(tc.t0, tc.tf, tc.num_nodes)
+            t = np.linspace(t0, tf, tc.num_nodes)
         elif spacing == 'power':
-            t = np.power(np.linspace(0, 1, tc.num_nodes), 3 / 2) * (tc.tf - tc.t0) + tc.t0
+            t = np.power(np.linspace(0, 1, tc.num_nodes), 3 / 2) * (tf - t0) + t0
         else:
             raise(RuntimeError, 'Invalid spacing type for time vector')
         t = np.append(t, t[-1])
         self.unscaled_times = t
         self.scaled_times = t / self.tu
-        self.unscaled_states = np.empty((tc.num_nodes + 1, 2 * self.dim + 1), float)
+        self.unscaled_states = np.empty((tc.num_nodes, 2 * self.dim + 1), float)
         self.scaled_states = np.empty_like(self.unscaled_states, float)
         self.full_traj = np.empty((tc.num_nodes * tc.n_steps + 1, 2 * self.dim + 2), float)  # TODO verify that steps between nodes -2 and -1 aren't different from other steps for full_traj
 
@@ -189,8 +203,9 @@ class Trajectory:
         else:
             miss_ind = np.array([]).astype(int)
 
-        self.unscaled_states[0, :] = y0
-        self.scaled_states[0, :] = y0 / self.state_scales
+        self.unscaled_states[0, :6] = y0
+        self.unscaled_states[0, 6] = tc.m0
+        self.scaled_states[0, :] = self.unscaled_states[0] / self.state_scales
 
         # Main loop - check if integration should continue, get values needed for the integrator that change with each
         #             step, integrate one time step, and save results
@@ -220,7 +235,6 @@ class Trajectory:
                 thrust = self.spacecraft.controller(np.hstack((self.unscaled_states[i, tc.ind_dim], yf[tc.ind_dim[:-1]],
                                                                mass_ratio, time_ratio)) \
                          * self.spacecraft.engine_params['thrust_max_n'] / self.fu)
-            # TODO convert thrust from body (VNC?) frame to inertial frame before passing to integrator
 
             self._update_params(thrust)
 
@@ -326,9 +340,9 @@ class Trajectory:
                            *self.spacecraft.engine_params['thrust_power_coef'],
                            *self.spacecraft.engine_params['isp_power_coef']]
         else:
-            self.params = [*thrust,
+            self.params = [c.g0_ms2 * self.spacecraft.engine_params['isp_s'] / self.du * self.tu,
                            self.spacecraft.dry_mass / self.mu,
-                           c.g0_ms2 * self.spacecraft.engine_params['isp_s'] / self.du * self.tu]
+                           *thrust]
 
     def _update_sizes(self) -> None:
         """
@@ -339,22 +353,13 @@ class Trajectory:
                       'times': 2,
                       'param': 17 if self.spacecraft.engine_params['variable_power'] else 5}
 
-    # TODO update frame conversion formats - maybe make a wrapper that interprets the strings?
-    def convert_frame_to(self, new_frame: str) -> None:
-        """
-        Change the state vector to a different frame.
-        :param new_frame:
-        :return:
-        """
-        if not new_frame == self.frame:
-            self._state = _frames_conversions[self._frame + new_frame + str(self._dim)](self._state, self._central_body)
-            self._frame = new_frame
-
-    def evaluate(self) -> float:
+    def evaluate(self, genome: neat.genome.DefaultGenome = None, config=None) -> float:
+        if genome is not None:
+            self.spacecraft.set_controller(genome)
         self.fitness = np.ones(tc.num_cases) * np.inf
         for i in range(tc.num_cases):
-            # TODO boundary conditions should be based on initial and target planets with a specified time of flight
-            y0, yf = missed_thrust.make_new_bcs()
+            # y0, yf = missed_thrust.make_new_bcs()
+            y0, yf = missed_thrust.compute_bcs()  # TODO does tof need to be updated? Make sure different BC definitions are consistent
             self.propagate(y0, yf)
 
             # Check if integration was terminated early
@@ -368,7 +373,7 @@ class Trajectory:
             yf_target = yf[tc.ind_dim[:-1]]
 
             # Calculate propellant mass ratio and final time ratio
-            m_ratio = (y0[-1] - self.unscaled_states[-1, -1]) / y0[-1]
+            m_ratio = (self.unscaled_states[0, -1] - self.unscaled_states[-1, -1]) / self.unscaled_states[0, -1]
             t_ratio = self.unscaled_times[-1] / self.unscaled_times[-2]
 
             # Get fitness
@@ -412,3 +417,8 @@ class Trajectory:
         self._propagate_main_leg(y0, yf, include_missed_thrust)
         if tc.do_terminal_lambert_arc:
             self._post_transfer_capture(yf)
+        else:
+            self.unscaled_states[-1] = self.unscaled_states[-2]
+            self.scaled_states[-1] = self.scaled_states[-2]
+            self.unscaled_times[-1] = self.unscaled_times[-2]
+            self.scaled_times[-1] = self.unscaled_times[-2]
