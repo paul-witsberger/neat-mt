@@ -5,6 +5,7 @@ from traj_config import gm
 from numba import njit
 from copy import copy
 from constants import ephem, sec_to_day, year_to_sec, reference_date_jd1950, day_to_jc, u_earth_km3s2, r_earth_km
+import constants as c
 from typing import Union
 
 
@@ -75,7 +76,7 @@ def coe4_from_rv(r_vec: np.ndarray, v_vec: np.ndarray, gm: float = gm) -> np.nda
     return coe
 
 
-# @njit
+@njit
 def period_from_inertial(state: np.ndarray, gm: float = gm, max_time_sec: float = 10 * year_to_sec) -> float:
     """
     Computes the period of an orbit given its 3D state vector.
@@ -84,12 +85,22 @@ def period_from_inertial(state: np.ndarray, gm: float = gm, max_time_sec: float 
     :param max_time_sec:
     :return:
     """
-    a, e, i, w, om, f = inertial_to_keplerian_3d(state, gm=gm)
-    if e < 1:
-        per = 2 * np.pi * np.sqrt((a ** 3) / gm)
-        # per = np.min((per, max_time_sec))
+    r_vec, v_vec = state[:3], state[3:]
+    r, v = mag3(r_vec), mag3(v_vec)
+
+    # Eccentricity
+    e_vec = ((v * v - gm / r) * r_vec - np.dot(r_vec, v_vec) * v_vec) / gm
+    e = mag3(e_vec)
+    eps = v * v / 2 - gm / r
+
+    # Semi-major axis
+    tol = 1e-6
+    if e < (1 - tol):
+        a = - gm / 2 / eps
+        per = 2 * np.pi * (a * a * a / gm) ** 0.5
     else:
         per = max_time_sec
+
     return per
 
 
@@ -220,7 +231,7 @@ def inertial_to_keplerian_3d(state: np.ndarray, gm: float = gm) -> np.ndarray:
     :return:
     """
     r_vec, v_vec = state[:3], state[3:]
-    tol = 1e-8
+    tol = 1e-6
     r = mag3(r_vec)
     v = mag3(v_vec)
     h_vec = cross(r_vec, v_vec)
@@ -230,14 +241,13 @@ def inertial_to_keplerian_3d(state: np.ndarray, gm: float = gm) -> np.ndarray:
     n = mag3(n_vec)
 
     # Eccentricity
-    e_vec =  ((v ** 2 - gm / r) * r_vec - np.dot(r_vec, v_vec) * v_vec) / gm
+    e_vec =  ((v * v - gm / r) * r_vec - np.dot(r_vec, v_vec) * v_vec) / gm
     e = mag3(e_vec)
-    eps = v ** 2 / 2 - gm / r
+    eps = v * v / 2 - gm / r
 
     # Semi-major axis
-    if e == 1:
+    if abs(e - 1) < tol:
         a = np.infty
-        p = h ** 2 / gm
     else:
         a = - gm / 2 / eps
 
@@ -255,10 +265,15 @@ def inertial_to_keplerian_3d(state: np.ndarray, gm: float = gm) -> np.ndarray:
             om = 2 * np.pi - om
 
     # Argument of periapsis
-    if n == 0:
+    if n == 0 and False: # TODO verify where this statement came from
         # Special case - equatorial
-        # w = np.arccos(np.dot(np.array([1, 0, 0]), e_vec))
-        w = 0.
+        w = np.arccos(np.dot(np.array([1, 0, 0]), e_vec))
+        # w = 0.
+    elif (i < tol or np.abs(np.pi - i) < tol):
+        # Special case: elliptical equatorial - true longitude of periapsis
+        w = np.arccos(e_vec[0] / e)
+        if e_vec[1] < 0:
+            w = 2 * np.pi - w
     else:
         # General
         w = np.arccos(np.dot(n_vec, e_vec) / (n * e))
@@ -276,15 +291,10 @@ def inertial_to_keplerian_3d(state: np.ndarray, gm: float = gm) -> np.ndarray:
         f = np.arccos(np.dot(n_vec, r_vec) / (n * r))
         if r_vec[2] < 0:
             f = 2 * np.pi - f
-    elif (i < tol or np.abs(np.pi - i) < tol):
-        # Special case: elliptical equatorial - true longitude of periapsis
-        f = np.arccos(e_vec[0] / e)
-        if e_vec[1] < 0:
-            f = 2 * np.pi - f
     else:
         # General
-        f = np.arccos(min(np.dot(e_vec, r_vec) / (e * r), 1.))
-        if np.dot(r_vec, v_vec) < 0:
+        f = np.arccos(max(min(np.dot(e_vec, r_vec) / (e * r), 1.), -1.))
+        if np.dot(r_vec, v_vec) < 0:  # TODO verify this line - I changed this from "<0" to ">0" and then reverted
             f = 2 * np.pi - f
 
     return np.array([a, e, i, w, om, f])
@@ -416,7 +426,7 @@ def mee_to_keplerian_3d(state: np.ndarray) -> np.ndarray:
     return np.array([a, e, i, w, om, v])
 
 
-@njit
+# @njit
 def rotate_vnc_to_inertial_3d(vec: np.ndarray, state: np.ndarray) -> np.ndarray:
     """
     Rotates the current velocity vector to an inertial frame.
@@ -424,11 +434,11 @@ def rotate_vnc_to_inertial_3d(vec: np.ndarray, state: np.ndarray) -> np.ndarray:
     :param state:
     :return:
     """
-    r_vec, v_vec = state[:3], state[3:6]    # radius and velocity vectors
-    v_hat = v_vec / mag3(v_vec)   # velocity unit vector
-    h_vec = cross(r_vec, v_vec)             # angular momentum vector
-    n_hat = h_vec / mag3(h_vec)   # angular momentum unit vector; also, normal unit vector
-    c_hat = cross(v_hat, n_hat)             # co-normal unit vector
+    r_vec, v_vec = state[:3], state[3:6]      # radius and velocity vectors
+    v_hat = v_vec / mag3(v_vec)               # velocity unit vector
+    h_vec = cross(r_vec, v_vec)               # angular momentum vector
+    n_hat = h_vec / mag3(h_vec)               # angular momentum unit vector; also, normal unit vector
+    c_hat = cross(v_hat, n_hat)               # co-normal unit vector
     dcm = np.vstack((v_hat, n_hat, c_hat)).T  # direction cosine matrix
     return np.dot(dcm, vec)
 
@@ -786,14 +796,14 @@ def gamma_from_r_v(r_vec: np.ndarray, v_vec: np.ndarray) -> float:
     v_mag = mag3(v_vec)
     v_hat = v_vec / v_mag
 
-    h_vec = np.cross(r_vec, v_vec)
-    h_mag = np.linalg.norm(h_vec)
+    h_vec = cross(r_vec, v_vec)
+    h_mag = mag3(h_vec)
     assert h_mag > 0
     h_hat = h_vec / h_mag
 
-    t_hat = np.cross(h_hat, r_hat)
+    t_hat = cross(h_hat, r_hat)
     gamma_mag = np.arccos(np.dot(t_hat, v_hat))
-    gamma_sign = 1 if np.cross(v_hat, t_hat)[-1] > 0 else -1
+    gamma_sign = np.sign(np.dot(r_vec, v_vec))
     gamma = gamma_mag * gamma_sign
     return gamma
 
@@ -819,15 +829,16 @@ def mag3(array: np.ndarray) -> float:
 
 
 def true_anomaly_from_r_v(r_vec: np.ndarray, v_vec: np.ndarray) -> float:
+    # TODO streamline this
     if r_vec.size == 2:
         a, e, w, f = inertial_to_keplerian_2d(np.hstack((r_vec, v_vec)))
     else:
         try:
             a, e, i, w, om, f = inertial_to_keplerian_3d(np.hstack((r_vec, v_vec)))
-        except ZeroDivisionError as e:
+        except ZeroDivisionError as err:
             print(r_vec)
             print(v_vec)
-            raise e
+            raise err
     return f
 
 
@@ -840,10 +851,11 @@ def time_to_periapsis_from_r_v(r_vec: np.ndarray, v_vec: np.ndarray, gm: float =
     :param r_periapsis_km:
     :return:
     """
+    # TODO streamline this
     if r_vec.size == 2:
-        a, e, w, f = inertial_to_keplerian_2d(np.hstack((r_vec, v_vec)))
+        a, e, w, f = inertial_to_keplerian_2d(np.hstack((r_vec, v_vec)), gm=gm)
     else:
-        a, e, i, w, om, f = inertial_to_keplerian_3d(np.hstack((r_vec, v_vec)))
+        a, e, i, w, om, f = inertial_to_keplerian_3d(np.hstack((r_vec, v_vec)), gm=gm)
 
     if e >= 0.99 and e <= 1.01:  # parabolic
         if f > 0 and f < np.pi:  # ascending and escaping
@@ -881,10 +893,8 @@ def min_dv_capture(state_sc: np.ndarray, state_target: np.ndarray, gm: float, r_
     vectors of the spacecraft with respect to the sun, and the radius and velocity vectors of target planet with respect
     to the sun. Also, the gravitational parameter of the target planet and the desired final circular orbital radius.
     Outputs the two delta V vectors, and the time of flight between them.
-    :param r_sc_vec:
-    :param v_sc_vec:
-    :param r_target_vec:
-    :param v_target_vec:
+    :param state_sc:
+    :param state_target:
     :param gm:
     :param r_periapsis_km:
     :return:
@@ -898,20 +908,21 @@ def min_dv_capture(state_sc: np.ndarray, state_target: np.ndarray, gm: float, r_
     r_mag_km = mag2(r_vec) if r_vec.size == 2 else mag3(r_vec)
     v_mag_kms = mag2(v_vec) if v_vec.size == 2 else mag3(v_vec)
     v_hat = v_vec / v_mag_kms
-    epsilon = v_mag_kms * v_mag_kms / 2 - gm / r_mag_km
+    epsilon_current = v_mag_kms * v_mag_kms / 2 - gm / r_mag_km  # with respect to target
     # Define target orbit
-    v_final_kms = (gm / r_periapsis_km) ** 0.5
+    v_final_kms = (gm / r_periapsis_km) ** 0.5  # target circular speed
     # Check if current state is hyperbolic
-    if epsilon > 0:
-        v_mag_capture_kms = (2 * gm / r_mag_km) ** 0.5
-        v_periapsis_kms = (2 * gm / r_periapsis_km) ** 0.5
-        dv1_mag = v_mag_capture_kms - v_mag_kms
-        gamma = gamma_from_r_v(r_vec, v_vec)
+    if epsilon_current > 0:
+        v_periapsis_kms = (2 * gm / r_periapsis_km) ** 0.5  # parabolic speed at target periapsis
+        v_mag_capture_kms = (2 * gm / r_mag_km) ** 0.5      # speed along parabolic orbit at current distance (?)
+        dv1_mag = (v_mag_capture_kms - v_mag_kms) * 1.0     # final - initial = parabolic capture (! TODO !)
+        gamma = gamma_from_r_v(r_vec, v_vec)                # check if ascending or descending
         if gamma > 0:
-            dv1_mag -= v_mag_capture_kms
+            dv1_mag -= v_mag_capture_kms  # (! TODO !) don't need to completely reverse direction - this will send you around the other side of the planet
+            # which side will this capture around?
     else:
         dv1_mag = 0
-        v_periapsis_kms = (2 * (epsilon + gm / r_periapsis_km)) ** 0.5
+        v_periapsis_kms = (2 * (epsilon_current + gm / r_periapsis_km)) ** 0.5
     # Compute velocity vector after the maneuvers
     dv1_vec = v_hat * dv1_mag
     v_transfer_vec = v_vec + dv1_vec
@@ -919,7 +930,8 @@ def min_dv_capture(state_sc: np.ndarray, state_target: np.ndarray, gm: float, r_
     dv2_mag = v_final_kms - v_periapsis_kms
     # Compute delta v vector and final velocity vector
     true_anomaly = true_anomaly_from_r_v(r_vec, v_transfer_vec)
-    v_final_vec = rotate_vector_2d(np.array([v_final_kms, 0, 0]), true_anomaly)
+    a, e, i, w, om , f = inertial_to_keplerian_3d(state_sc[:6] - state_target, gm=gm)
+    v_final_vec = euler313(np.array([v_final_kms, 0, 0]), om, i, w + true_anomaly + np.pi / 2)
     dv2_vec = v_final_vec / v_final_kms * dv2_mag
     # Compute time-of-flight to reach periapsis after first maneuver
     tof = time_to_periapsis_from_r_v(r_vec, v_transfer_vec, gm)
@@ -942,7 +954,7 @@ def rotate_vector_2d(vec: np.ndarray, angle: float) -> np.ndarray:
 
 
 @njit
-def shift_vector_origin(cb1_to_sc: np.ndarray, cb2_to_cb1: np.ndarray) -> np.ndarray:
+def shift_vector_origin_single(cb1_to_sc: np.ndarray, cb2_to_cb1: np.ndarray) -> np.ndarray:
     """
     Change the central body by which a vector is defined.
     :param cb1_to_sc:
@@ -955,7 +967,17 @@ def shift_vector_origin(cb1_to_sc: np.ndarray, cb2_to_cb1: np.ndarray) -> np.nda
     return cb2_to_sc
 
 
-def change_central_body(states: np.ndarray, times: np.ndarray, cur_cb: str, new_cb: str) -> np.ndarray:
+def shift_vector_origin_multiple(cb1_to_sc: np.ndarray, cb2_to_cb1: np.ndarray) -> np.ndarray:
+    """
+    Change the central body by which a vector is defined. Assumes cb2_to_cb1 has same shape as cb1_to_sc.
+    :param cb1_to_sc:
+    :param cb2_to_cb1:
+    :return:
+    """
+    return cb2_to_cb1 + cb1_to_sc
+
+
+def change_central_body(states: np.ndarray, times: np.ndarray, cur_cb: str, new_cb: str, gm: float = gm) -> np.ndarray:
     """
     Shifts an array of states to be defined by a different reference over a time history.
     :param states:
@@ -967,7 +989,7 @@ def change_central_body(states: np.ndarray, times: np.ndarray, cur_cb: str, new_
     # Determine state history of new central body with respect to current central body
     n_dim = states.shape[1]
     assert n_dim == 4 or n_dim == 6
-    elements = ['a', 'e', 'w', 'M'] if n_dim == 2 else ['a', 'e', 'i', 'w', 'o', 'M']
+    elements = ['a', 'e', 'w', 'M'] if n_dim == 2 else ['a', 'e', 'i', 'w', 'O', 'M']
     assert cur_cb == 'sun' or new_cb == 'sun'
     if cur_cb == 'sun':
         planets = [new_cb]
@@ -977,15 +999,16 @@ def change_central_body(states: np.ndarray, times: np.ndarray, cur_cb: str, new_
         flip = True
     times_jc = (times * sec_to_day + reference_date_jd1950) * day_to_jc
     non_sun_cb_states = ephem(elements, planets, times_jc)
-    # Flip relative direction if the new body is 'sun'
-    cb2_to_cb1 = non_sun_cb_states if not flip else -non_sun_cb_states
     # Convert to inertial coordinates
     if n_dim == 4:
-        keplerian_to_inertial_2d(cb2_to_cb1, mean_or_true='mean')
+        cb2_to_cb1_i = keplerian_to_inertial_2d(non_sun_cb_states, gm=gm, mean_or_true='mean')
     else:
-        keplerian_to_inertial_3d(cb2_to_cb1, mean_or_true='mean')
+        cb2_to_cb1_i = keplerian_to_inertial_3d(non_sun_cb_states, gm=gm, mean_or_true='mean')
+    # Flip relative direction if the new body is 'sun' # TODO but this was meant for cartesian -> how does this work for keplerian?
+    if flip:
+        cb2_to_cb1_i *= -1.
     # Shift vectors
-    new_states = shift_vector_origin(states, cb2_to_cb1)
+    new_states = shift_vector_origin_multiple(states, cb2_to_cb1_i)
     return new_states
 
 
@@ -1021,15 +1044,755 @@ def euler1(vector: np.ndarray, theta: float) -> np.ndarray:
     return np.matmul(dcm, vector)
 
 
+def E_from_f_e(f: float, e: float) -> float:
+    return np.arctan2(sin(f) * (1 - e * e) ** 0.5, e + cos(f))
+
+
+def f_from_E_e(E: float, e: float) -> float:
+    return np.arctan2(sin(E) * (1 - e - e) ** 0.5, cos(E) - e)
+
+
+def fpa_from_E_e(E: float, e: float) -> float:
+    return np.arctan2(e * sin(E), (1 - e * e) ** 0.5)
+
+
+def fpa_from_h_r_v(h: float, r: float, v: float) -> float:
+    return np.arccos(h / r / v)
+
+
+def fpa_parabolic(f: float) -> float:
+    return f / 2
+
+
+def f_parabolic_from_B_p_r(B: float, p: float, r: float) -> float:
+    return np.arctan2(p * B, p - r)
+
+
+def E_from_M_e(M: float, e: float, tol: float = 1e-8) -> float:
+    E_guess = M
+    for i in range(20):
+        E_next = E_guess + (M + e * sin(E_guess) - E_guess) / (1 - e * cos(E_guess))
+        if abs(E_next - E_guess) < tol:
+            return E_next
+        else:
+            E_guess = E_next
+    raise RuntimeError('Newton''s method did not converge.')
+
+
+def M_from_E_e(E: float, e: float) -> float:
+    return E - e * sin(E)
+
+
+def r_from_a_e_f(a: float, e: float, f: float) -> float:
+    return a * (1 - e * e) / (1 + e * cos(f))
+
+
+def rp_from_a_e(a: float, e: float) -> float:
+    return a * (1 - e)
+
+
+def ra_from_a_e(a: float, e: float) -> float:
+    return a * (1 + e)
+
+
+def p_from_a_e(a: float, e: float) -> float:
+    return a * (1 - e * e)
+
+
+def a_from_gm_energy(gm: float, energy: float) -> float:
+    return - gm / 2 / energy
+
+
+def v_from_gm_eps_r(gm: float, eps: float, r: float) -> float:
+    return (2 * (gm / r + eps)) ** 0.5
+
+
+def v_from_gm_r_a(gm: float, r: float, a: float) -> float:
+    return (2 * gm / r - gm / a) ** 0.5
+
+
+def v_from_gm_r_e_f(gm: float, r: float, e: float, f: float) -> float:
+    return (gm / r * (2 - (1 - e - e) / (1 + e * cos(f)))) ** 0.5
+
+
+def n_from_gm_a(gm: float, a: float) -> float:
+    return (gm / a / a / a) ** 0.5
+
+
+def n_from_per(per: float) -> float:
+    return 2 * np.pi / per
+
+
+def per_from_gm_a(gm: float, a: float) -> float:
+    return 2 * np.pi * (a * a * a / gm) ** 0.5
+
+
+def v_parabolic(gm: float, r: float) -> float:
+    return (2 * gm / r) ** 0.5
+
+
+def per_from_rp_ra(rp: float, ra: float, gm: float) -> float:
+    a = (rp + ra) / 2
+    return 2 * np.pi * (a * a * a / gm) ** 0.5
+
+
+def a_from_gm_per(gm: float, per: float) -> float:
+    return (gm * (per / 2 / np.pi) ** 2) ** (1 / 3)
+
+
+def ra_from_rp_per(rp: float, per: float, gm: float) -> float:
+    a = a_from_gm_per(gm, per)
+    return 2 * a - rp
+
+
+def f_from_r_a_e(r: float, a: float, e: float, sign: float) -> float:
+    return np.arccos((a * (1 - e * e) / r - 1) / e) * sign
+
+
+def energy_from_gm_r_v(gm: float, r: float, v: float) -> float:
+    return v * v / 2 - gm / r
+
+
+def energy_from_gm_a(gm: float, a: float) -> float:
+    return - gm / 2 / a
+
+
+def e_vec_from_gm_v_r(gm: float, v_vec: np.ndarray, r_vec: np.ndarray) -> np.ndarray:
+    r_mag, v_mag = mag3(r_vec), mag3(v_vec)
+    return ((v_mag * v_mag - gm / r_mag) * r_vec - np.dot(r_vec, v_vec) * v_vec) / gm
+
+
+def a_e_from_rp_ra(rp: float, ra: float) -> (float, float):
+    e = (ra - rp) / (rp + ra)
+    a = rp / (1 - e)
+    return a, e
+
+
+def a_from_rp_ra(rp: float, ra: float) -> float:
+    return 0.5 * (rp + ra)
+
+
+def e_from_rp_ra(rp: float, ra: float) -> float:
+    return (ra - rp) / (ra + rp)
+
+
+def h_from_gm_a_e(gm: float, a: float, e: float) -> float:
+    return (gm * a * (1 - e * e)) ** 0.5
+
+
+def gamma_from_h_r_v_qcheck(h: float, r: float, v: float, r_vec: np.ndarray, v_vec: np.ndarray) -> float:
+    return np.arccos(h / r / v) * sign_check(r_vec, v_vec)
+
+
+def gamma_from_h_r_v(h: float, r: float, v: float) -> float:
+    return np.arccos(h / r / v)
+
+
+def f_from_r_p_e_qcheck(r: float, p: float, e: float, r_vec: np.ndarray, v_vec: np.ndarray) -> float:
+    return np.arccos((p / r - 1) / e) * sign_check(r_vec, v_vec)
+
+
+def f_from_r_p_e(r: float, p: float, e: float) -> float:
+    return np.arccos((p / r - 1) / e)
+
+
+def sign_check(r_vec: np.ndarray, v_vec: np.ndarray) -> float:
+    return np.sign(np.dot(r_vec, v_vec))
+
+
+def f_from_gamma_r_v_gm(gamma: float, r: float, v: float, gm: float) -> float:
+    tmp = r * v * v / gm * cos(gamma)
+    return np.arctan2(tmp * sin(gamma), tmp * cos(gamma) - 1)
+
+
+def time_to_apoapsis_from_per_M_n(per: float, M: float, n: float) -> float:
+    return per / 2 - M / n
+
+
+def time_to_periapsis_from_M_n(M: float, n: float) -> float:
+    return M / n
+
+
+def H_from_f_e(f: float, e: float) -> float:
+    return np.arctanh(sin(f) * (e * e - 1) ** 0.5 / (e + cos(f)))
+
+
+def lower_periapsis(ra_cur: float, a_cur: float, rp_new: float, gm: float) -> float:
+    a_new = (ra_cur + rp_new) / 2
+    va_cur = (2 * gm / ra_cur - gm / a_cur) ** 0.5
+    va_new = (2 * gm / ra_cur - gm / a_new) ** 0.5
+    return va_new - va_cur
+
+
+def raise_periapsis(ra_cur: float, a_cur: float, rp_new: float, gm: float) -> float:
+    return lower_periapsis(ra_cur, a_cur, rp_new, gm)
+
+
+def lower_apoapsis(rp_cur: float, a_cur: float, ra_new: float, gm: float) -> float:
+    a_new = (rp_cur + ra_new) / 2
+    vp_cur = (2 * gm / rp_cur - gm / a_cur) ** 0.5
+    vp_new = (2 * gm / rp_cur - gm / a_new) ** 0.5
+    return vp_new - vp_cur
+
+
+def raise_apoapsis(rp_cur: float, a_cur: float, ra_new: float, gm: float) -> float:
+    return lower_apoapsis(rp_cur, a_cur, ra_new, gm)
+
+
+# TODO make functions for various capture types
+#    - starting conic: hyperbolic or elliptical
+#    - starting inside or outside SOI (elliptical can't start outside)
+#    - final capture orbit: low circular or high elliptical
+
+
+def capture(state_rel: np.ndarray, rp_target: float, per_target: float, gm: float, r_SOI: float, capture_low: bool,
+            current: bool) -> list:
+    """
+    Calls the appropriate function to capture a spacecraft around the target body based on the spacecraft's current
+    orbit. Decisions include starting from hyperbolic or elliptical orbit, targeting a low circular or high elliptical
+    final orbit, starting inside or outside the sphere of influence (hyperbolic only), and whether the maneuver could
+    occur at the optimal point of the current orbit or force it to be at the current location.
+    :param state_rel:
+    :param rp_target:
+    :param per_target:
+    :param gm:
+    :param r_SOI:
+    :param capture_low:
+    :param current:
+    :return:
+    """
+    r_mag, v_mag = mag3(state_rel[:3]), mag3(state_rel[3:])
+    energy = v_mag * v_mag / 2 - gm / r_mag
+    char1 = 'h' if energy > 0 else 'e'
+    char2 = 'o' if r_mag > r_SOI else 'i'
+    char3 = 'l' if capture_low else 'h'
+    char4 = 'c' if current else 'o'
+    capture_type = char1 + char2 + char3 + char4
+    # TODO the difference between low and high capture is an additional maneuver at periapsis - so just worry about high
+    #  capture and then make another function that can optionally compute the final maneuver
+    capture_methods = {'holc': _hyperbolic_out_low_current,  'holo': _hyperbolic_out_low_optimal,
+                       'hilc': _hyperbolic_in_low_current,   'hilo': _hyperbolic_in_low_optimal,
+                       'hohc': _hyperbolic_out_high_current, 'hoho': _hyperbolic_out_high_optimal,
+                       'hihc': _hyperbolic_in_high_current,  'hiho': _hyperbolic_in_high_optimal,
+                       'eilc': _elliptical_low_current,      'eilo': _elliptical_low_optimal,
+                       'eihc': _elliptical_high_current,     'eiho': _elliptical_high_optimal}
+    maneuvers = capture_methods[capture_type](state_rel, rp_target, per_target, gm)
+    return maneuvers
+
+
+# Finished - but I may want to change first maneuver
+def _hyperbolic_out_low_current(state_0: np.ndarray, rp_target: float, per_target: float, gm: float) -> list:
+    """
+    Determine flight path angle that will set periapsis to desired periapsis distance on a parabolic trajectory.
+    At periapsis, circularize. This should work whether we are ascending or descending.
+    """
+    r_vec, v_vec = state_0[:3], state_0[3:]
+    r_mag, v_mag = mag3(r_vec), mag3(v_vec)
+    vp_para = (2 * gm / rp_target) ** 0.5  # parabolic speed at target periapsis
+    v_mag_para = (2 * gm / r_mag) ** 0.5  # speed along parabolic orbit at current distance
+    # Compute new flight path angle (gamma)
+    p = 2 * rp_target
+    h_mag = mag3(cross(r_vec, v_vec))
+    gamma = np.arccos(h_mag / r_mag / v_mag) * np.sign(np.dot(r_vec, v_vec))
+    n = 2 * (gm / p ** 3) ** 0.5
+    B = (2 * r_mag / p - 1) ** 0.5
+    tof = (B ** 3 / 3 + + B) / n  # time to periapsis
+    f = abs(np.arctan2(p * B, p - r_mag)) * -1.  # make sure we are descending
+    gamma_para = f / 2
+    d_gamma = gamma_para - gamma
+    # Use law of cosines to determine dv1_mag and angle of dv1 in VNC coords (alpha)
+    dv1_mag = (v_mag ** 2 + v_mag_para ** 2 - 2 * v_mag * v_mag_para * cos(d_gamma)) ** 0.5
+    beta = np.arccos((v_mag ** 2 + dv1_mag ** 2 - v_mag_para ** 2) / 2 / v_mag / dv1_mag)
+    alpha = np.pi - beta
+    theta = alpha + np.arctan2(r_vec[1], r_vec[0]) + np.pi / 2 - gamma  # TODO how should arctan(y/x) be changed for 3D?
+    dv1_vec = np.array([dv1_mag * cos(theta), dv1_mag * sin(theta), 0])  # TODO how should dv1_vec be changed for 3D?
+    v_transfer_vec = v_vec + dv1_vec
+    # Compute delta v to get into target orbit at periapsis
+    v_final = (gm / rp_target) ** 0.5
+    dv2_mag = v_final - vp_para
+    # Compute delta v vector and final velocity vector
+    v_periapsis_vec = v_transfer_vec / v_mag_para * vp_para
+    v_periapsis_vec = euler313(v_periapsis_vec, 0, 0, - f + gamma_para)
+    dv2_vec = v_periapsis_vec / vp_para * dv2_mag
+    maneuvers = [dv1_vec, dv2_vec, tof]
+    return maneuvers
+
+
+# Finished - there *may* be a way to optimally adjust energy and orientation instead of just orientation
+def _hyperbolic_out_low_optimal(state_0: np.ndarray, rp_target: float, per_target: float, gm: float) -> (list, np.ndarray):
+    """
+    :param state_0:
+    :return:
+    """
+    # Define initial orbit in Keplerian elements - then determine Cartesian state
+    state_kep = inertial_to_keplerian_3d(state_0, gm)
+    # Then determine f when r = r_far_away
+    r_far = 10 * c.r_soi_mars
+    assert mag3(state_0) < r_far, 'Spacecraft is too far from planet for this capture method to apply.'
+    sign = -1
+    f_opt = f_from_r_a_e(r_far, state_kep[0], state_kep[1], sign)
+    state_kep[-1] = f_opt
+    # Then determine Cartesian state
+    state_opt = keplerian_to_inertial_3d(state_kep, gm)
+    # Now calculate TCM from new location
+    r_vec, v_vec = state_opt[:3], state_opt[3:]
+    r_mag, v_mag = mag3(r_vec), mag3(v_vec)
+    vinf2 = v_mag * v_mag - 2 * gm / r_mag
+    a = -gm / vinf2
+    e = 1 - rp_target / a
+    h = (gm * a * (1 - e * e)) ** 0.5
+    gamma0 = gamma_from_r_v(r_vec, v_vec)
+    gamma1 = np.arccos(h / r_mag / v_mag) * -1
+    dgamma = gamma1 - gamma0
+    f = np.arccos((a / r_mag * (1 - e * e) - 1) / e) * -1
+    ha = np.arccosh((r_mag / abs(a) + 1) / e) * -1
+    ma = e * np.sinh(ha) - ha
+    tof = abs((-(a ** 3) / gm) ** 0.5 * ma)
+    dv1_mag = (2 * v_mag * v_mag * (1 - np.cos(dgamma))) ** 0.5
+    beta = np.pi - np.arcsin(v_mag / dv1_mag * sin(abs(dgamma)))
+    dv1_vec = np.array([cos(beta), 0., -sin(beta)]) * dv1_mag  # NOTE: ASSUMES 2D
+    dv1_vec = rotate_vnc_to_inertial_3d(dv1_vec, state_opt)
+    vp_hyper = (vinf2 + 2 * gm / rp_target) ** 0.5
+    vp_capture = (gm / rp_target) ** 0.5
+    # print('vp_hyper estimate = %f' % vp_hyper)
+    dv2_mag = vp_capture - vp_hyper
+    dv2_vec = (v_vec + dv1_vec) / mag3(v_vec + dv1_vec) * dv2_mag
+    dalpha = (0 - f) - (0 - gamma1)
+    dv2_vec = euler313(dv2_vec, 0, 0, dalpha * np.sign(cross(r_vec, v_vec)[-1]))
+    maneuvers = [dv1_vec, dv2_vec, tof]
+    return maneuvers, state_opt
+
+
+# Finished - but I may want to change first maneuver
+def _hyperbolic_out_high_current(state_0: np.ndarray, rp_target: float, per_target: float, gm: float) -> list:
+    """
+    :param state_0:
+    :return:
+    """
+    r_vec, v_vec = state_0[:3], state_0[3:]
+    r_mag, v_mag = mag3(r_vec), mag3(v_vec)
+    vp_para = (2 * gm / rp_target) ** 0.5  # parabolic speed at target periapsis
+    v_mag_para = (2 * gm / r_mag) ** 0.5  # speed along parabolic orbit at current distance
+    # Compute new flight path angle (gamma)
+    p = 2 * rp_target
+    h_mag = mag3(cross(r_vec, v_vec))
+    gamma = np.arccos(h_mag / r_mag / v_mag) * np.sign(np.dot(r_vec, v_vec))
+    n = 2 * (gm / p ** 3) ** 0.5
+    B = (2 * r_mag / p - 1) ** 0.5
+    tof = (B ** 3 / 3 + + B) / n  # time to periapsis
+    f = abs(np.arctan2(p * B, p - r_mag)) * -1.  # make sure we are descending
+    gamma_para = f / 2
+    d_gamma = gamma_para - gamma
+    # Use law of cosines to determine dv1_mag and angle of dv1 in VNC coords (alpha)
+    dv1_mag = (v_mag ** 2 + v_mag_para ** 2 - 2 * v_mag * v_mag_para * cos(d_gamma)) ** 0.5
+    beta = np.arccos((v_mag ** 2 + dv1_mag ** 2 - v_mag_para ** 2) / 2 / v_mag / dv1_mag)
+    alpha = np.pi - beta
+    theta = alpha + np.arctan2(r_vec[1], r_vec[0]) + np.pi / 2 - gamma  # TODO how should arctan(y/x) be changed for 3D?
+    dv1_vec = np.array([dv1_mag * cos(theta), dv1_mag * sin(theta), 0])  # TODO how should dv1_vec be changed for 3D?
+    v_transfer_vec = v_vec + dv1_vec
+    # Compute delta v to get into target orbit at periapsis
+    ra_target = ra_from_rp_per(rp_target, per_target, gm)
+    a_target = (ra_target + rp_target) / 2
+    v_final = v_from_gm_r_a(gm, rp_target, a_target)
+    dv2_mag = v_final - vp_para
+    # Compute delta v vector and final velocity vector
+    v_periapsis_vec = v_transfer_vec / v_mag_para * vp_para
+    v_periapsis_vec = euler313(v_periapsis_vec, 0, 0, - f + gamma_para)
+    dv2_vec = v_periapsis_vec / vp_para * dv2_mag
+    maneuvers = [dv1_vec, dv2_vec, tof]
+    return maneuvers
+
+
+# Finished - there *may* be a way to optimally adjust energy and orientation instead of just orientation
+def _hyperbolic_out_high_optimal(state_0, rp_target: float, per_target: float, gm: float) -> (list, np.ndarray):
+    """
+    :param state_0:
+    :return:
+    """
+    # Define initial orbit in Keplerian elements - then determine Cartesian state
+    state_kep = inertial_to_keplerian_3d(state_0, gm)
+    # Then determine f when r = r_far_away
+    r_far = 10 * c.r_soi_mars
+    sign = -1
+    f_opt = f_from_r_a_e(r_far, state_kep[0], state_kep[1], sign)
+    state_kep[-1] = f_opt
+    # Then determine Cartesian state
+    state_opt = keplerian_to_inertial_3d(state_kep, gm)
+    # Now calculate TCM from new location
+    r_vec, v_vec = state_opt[:3], state_opt[3:]
+    r_mag, v_mag = mag3(r_vec), mag3(v_vec)
+    vinf2 = v_mag * v_mag - 2 * gm / r_mag
+    a = -gm / vinf2
+    e = 1 - rp_target / a
+    h = (gm * a * (1 - e * e)) ** 0.5
+    gamma0 = gamma_from_r_v(r_vec, v_vec)
+    gamma1 = np.arccos(h / r_mag / v_mag) * -1
+    dgamma = gamma1 - gamma0
+    f = np.arccos((a / r_mag * (1 - e * e) - 1) / e) * -1
+    ha = np.arccosh((r_mag / abs(a) + 1) / e) * -1
+    ma = e * np.sinh(ha) - ha
+    tof = abs((-(a ** 3) / gm) ** 0.5 * ma)
+    dv1_mag = (2 * v_mag * v_mag * (1 - np.cos(dgamma))) ** 0.5
+    beta = np.pi - np.arcsin(v_mag / dv1_mag * sin(abs(dgamma)))
+    dv1_vec = np.array([cos(beta), 0., -sin(beta)]) * dv1_mag  # NOTE: ASSUMES 2D
+    dv1_vec = rotate_vnc_to_inertial_3d(dv1_vec, state_opt)
+    vp_hyper = (vinf2 + 2 * gm / rp_target) ** 0.5
+    a_capture = a_from_gm_per(gm, per_target)
+    vp_capture = v_from_gm_r_a(gm, rp_target, a_capture)
+    # print('vp_hyper estimate = %f' % vp_hyper)
+    dv2_mag = vp_capture - vp_hyper
+    dv2_vec = (v_vec + dv1_vec) / mag3(v_vec + dv1_vec) * dv2_mag
+    dalpha = (0 - f) - (0 - gamma1)
+    dv2_vec = euler313(dv2_vec, 0, 0, dalpha * np.sign(cross(r_vec, v_vec)[-1]))
+    maneuvers = [dv1_vec, dv2_vec, tof]
+    return maneuvers, state_opt
+
+
+# Finished
+def _hyperbolic_in_low_current(state_0: np.ndarray, rp_target: float, per_target: float, gm: float) -> list:
+    """
+    :param state_0:
+    :param rp_target:
+    :return:
+    """
+    r0_vec, v0_vec = state_0[:3], state_0[3:]
+    r0_mag, v0_mag = mag3(r0_vec), mag3(v0_vec)
+    h0_vec = cross(r0_vec, v0_vec)
+    h0_mag = mag3(h0_vec)
+    gamma = gamma_from_h_r_v_qcheck(h0_mag, r0_mag, v0_mag, r0_vec, v0_vec)
+    ra_target = ra_from_rp_per(rp_target, per_target, gm)
+    # Conserve r_vec, gamma; only change v_mag such that ra becomes ra_target
+    v1_mag = ((2 * gm * ra_target * (1 - ra_target / r0_mag)) / (r0_mag ** 2 * cos(gamma) ** 2 - ra_target ** 2)) ** 0.5
+    dv1_mag = v1_mag - v0_mag
+    dv1_vec = v0_vec / v0_mag * dv1_mag
+    v1_vec = v0_vec + dv1_vec
+
+    energy = energy_from_gm_r_v(gm, r0_mag, v1_mag)
+    a = a_from_gm_energy(gm, energy)
+    e_vec = e_vec_from_gm_v_r(gm, v1_vec, r0_vec)
+    e_mag = mag3(e_vec)
+    rp = rp_from_a_e(a, e_mag)
+
+    # Check that periapsis is above surface
+    if rp < rp_target:  # Assume that if rp < rp_target, then rp < r_planet
+        v1_mag = ((2 * gm * rp_target * (1 - rp_target / r0_mag)) / (r0_mag ** 2 * cos(gamma) ** 2 - rp_target ** 2)) ** 0.5
+        dv1_mag = v1_mag - v0_mag
+        dv1_vec = v0_vec / v0_mag * dv1_mag
+        v1_vec = v0_vec + dv1_vec
+
+        # At periapsis, circularize
+        energy = energy_from_gm_r_v(gm, r0_mag, v1_mag)
+        a = a_from_gm_energy(gm, energy)
+        e_vec = e_vec_from_gm_v_r(gm, v1_vec, r0_vec)
+        e_mag = mag3(e_vec)
+        rp = rp_from_a_e(a, e_mag)
+        vp = v_from_gm_r_a(gm, rp, a)
+        v2_mag = (gm / rp_target) ** 0.5
+        dv2_mag = v2_mag - vp
+        a, e, i, w, om, f = inertial_to_keplerian_3d(np.hstack((r0_vec, v1_vec)), gm)
+        f = fix_angle(f)
+        df = 0 - f
+        dgamma = 0 - gamma
+        at_periapsis = True
+    else:
+        # At apoapsis, lower periapsis to target
+        ra = a * (1 + e_mag)
+        dv2_mag = lower_periapsis(ra, a, rp_target, gm)
+        a, e, i, w, om, f = inertial_to_keplerian_3d(np.hstack((r0_vec, v1_vec)), gm)
+        df = np.pi - f
+        dgamma = 0 - gamma
+        at_periapsis = False
+
+    # Account for sign difference if orbit is "backwards"
+    if i > np.pi / 2 or i < - np.pi / 2:
+        df *= -1
+        dgamma *= -1
+
+    # Compute 2nd delta V
+    dv2_vec = v1_vec / v1_mag * dv2_mag
+    dv2_vec = euler313(dv2_vec, 0, 0, df - dgamma)
+
+    # Compute TOF between 1st and 2nd burns, accounting for elliptic vs. hyperbolic
+    if e < 1:
+        E = E_from_f_e(f, e)
+        M = M_from_E_e(E, e)
+        per = per_from_gm_a(gm, a)
+        n = n_from_per(per)
+        tof12 = time_to_apoapsis_from_per_M_n(per, M, n)
+    else:
+        H = H_from_f_e(f, e) * sign_check(r0_vec, v1_vec)
+        M = e * np.sinh(H) - H
+        n = (gm / - a ** 3) ** 0.5
+        tof12 = time_to_periapsis_from_M_n(M, n)
+
+    if at_periapsis:
+        maneuvers = [dv1_vec, dv2_vec, tof12]
+    else:
+        # At new periapsis, circularize
+        a = (ra + rp_target) / 2
+        vp_transfer = (gm * (2 / rp_target -  1 / a)) ** 0.5
+        dv3_mag = (gm / rp_target) ** 0.5 - vp_transfer
+        dv3_vec = dv2_vec / dv2_mag * -dv3_mag
+        per = 2 * np.pi * (a * a * a / gm) ** 0.5
+        tof23 = per / 2
+        maneuvers = [dv1_vec, dv2_vec, dv3_vec, tof12, tof23]
+
+    return maneuvers
+
+
+# Finished
+def _hyperbolic_in_low_optimal(state_0: np.ndarray, rp_target: float, per_target: float, gm: float) -> (list, np.ndarray):
+    """
+    :param state_0:
+    :param rp_target:
+    :return:
+    """
+    # Define initial orbit in Keplerian elements
+    state_kep = inertial_to_keplerian_3d(state_0, gm)
+    state_kep[-1] = 0
+    state_opt = keplerian_to_inertial_3d(state_kep, gm)
+    maneuvers = _hyperbolic_in_low_current(state_opt, rp_target, per_target, gm)
+    return maneuvers, state_opt
+
+
+# Finished
+def _hyperbolic_in_high_current(state_0, rp_target: float, per_target: float, gm: float) -> list:
+    """
+    :param state_0:
+    :param rp_target:
+    :param per_target:
+    :param gm:
+    :return:
+    """
+    r0_vec, v0_vec = state_0[:3], state_0[3:]
+    r0_mag, v0_mag = mag3(r0_vec), mag3(v0_vec)
+    h0_vec = cross(r0_vec, v0_vec)
+    h0_mag = mag3(h0_vec)
+    gamma = gamma_from_h_r_v_qcheck(h0_mag, r0_mag, v0_mag, r0_vec, v0_vec)
+    ra_target = ra_from_rp_per(rp_target, per_target, gm)
+    # Conserve r_vec, gamma; only change v_mag such that ra becomes ra_target
+    v1_mag = ((2 * gm * ra_target * (1 - ra_target / r0_mag)) / (r0_mag ** 2 * cos(gamma) ** 2 - ra_target ** 2)) ** 0.5
+    dv1_mag = v1_mag - v0_mag
+    dv1_vec = v0_vec / v0_mag * dv1_mag
+    v1_vec = v0_vec + dv1_vec
+
+    energy = energy_from_gm_r_v(gm, r0_mag, v1_mag)
+    a = a_from_gm_energy(gm, energy)
+    e_vec = e_vec_from_gm_v_r(gm, v1_vec, r0_vec)
+    e_mag = mag3(e_vec)
+    rp = rp_from_a_e(a, e_mag)
+
+    # Check that periapsis is above surface
+    if rp < rp_target:  # Assume that if rp < rp_target, then rp < r_planet
+        v1_mag = ((2 * gm * rp_target * (1 - rp_target / r0_mag)) / (r0_mag ** 2 * cos(gamma) ** 2 - rp_target ** 2)) ** 0.5
+        dv1_mag = v1_mag - v0_mag
+        dv1_vec = v0_vec / v0_mag * dv1_mag
+        v1_vec = v0_vec + dv1_vec
+
+        # At periapsis, raise apoapsis to target
+        energy = energy_from_gm_r_v(gm, r0_mag, v1_mag)
+        a = a_from_gm_energy(gm, energy)
+        e_vec = e_vec_from_gm_v_r(gm, v1_vec, r0_vec)
+        e_mag = mag3(e_vec)
+        rp = rp_from_a_e(a, e_mag)
+        dv2_mag = lower_apoapsis(rp, a, ra_target, gm)
+        a, e, i, w, om, f = inertial_to_keplerian_3d(np.hstack((r0_vec, v1_vec)), gm)
+        f = fix_angle(f)
+        df = 0 - f
+        dgamma = 0 - gamma
+    else:
+        # At apoapsis, lower periapsis to target
+        ra = a * (1 + e_mag)
+        dv2_mag = lower_periapsis(ra, a, rp_target, gm)
+        a, e, i, w, om, f = inertial_to_keplerian_3d(np.hstack((r0_vec, v1_vec)), gm)
+        df = np.pi - f
+        dgamma = 0 - gamma
+    if i > np.pi / 2:
+        df *= -1
+        dgamma *= -1
+    dv2_vec = v1_vec / v1_mag * dv2_mag
+    dv2_vec = euler313(dv2_vec, 0, 0, df - dgamma)
+    if e < 1:
+        E = E_from_f_e(f, e)
+        M = M_from_E_e(E, e)
+        per = per_from_gm_a(gm, a)
+        n = n_from_per(per)
+        tof = time_to_apoapsis_from_per_M_n(per, M, n)
+    else:
+        H = H_from_f_e(f, e) * sign_check(r0_vec, v1_vec)
+        M = e * np.sinh(H) - H
+        n = (gm / - a ** 3) ** 0.5
+        tof = time_to_periapsis_from_M_n(M, n)
+    maneuvers = [dv1_vec, dv2_vec, tof]
+    return maneuvers
+
+
+# Finished
+def _hyperbolic_in_high_optimal(state_0, rp_target: float, per_target: float, gm: float) -> (list, np.ndarray):
+    """
+    :param state_0:
+    :param rp_target:
+    :param per_target:
+    :return:
+    """
+    state_kep = inertial_to_keplerian_3d(state_0, gm)
+    state_kep[-1] = 0
+    state_opt = keplerian_to_inertial_3d(state_kep, gm)
+    maneuvers = _hyperbolic_in_high_current(state_opt, rp_target, per_target, gm)
+    return maneuvers, state_opt
+
+
+# Not finished - not needed at this time
+def _elliptical_low_current(state_0: np.ndarray, rp_target: float, per_target: float, gm: float) -> list:
+    """
+    TODO lower energy such that new orbit has a periapsis at target distance, then circularize
+    TODO this implementation is not correct
+    :param state_0:
+    :param rp_target:
+    :return:
+    """
+    # r_vec, v_vec = state_0[:3], state_0[3:]
+    # r0, v0 = mag3(r_vec), mag3(v_vec)
+    # a0, e0, i0, w0, om0, f0 = inertial_to_keplerian_3d(np.hstack((r_vec, v_vec)), gm)
+    # eps0 = - gm / 2 / a0
+    # ra0 = a0 * (1 + e0)
+    # va0 = (2 * (eps0 + gm / ra0)) ** 0.5
+    # h0 = (gm * a0 * (1 - e0 * e0)) ** 0.5
+    # gamma0 = np.arccos(h0 / r0 / v0)
+    # gamma0 *= 1 if f0 < np.pi else -1
+    #
+    # at = ra0 + r_final
+    # epst = - gm / 2 / at
+    # vpt = (2 * (epst + gm / r_final)) ** 0.5
+    # vat = (2 * (epst + gm / ra0)) ** 0.5
+    #
+    # dv1_mag = vat - va0
+    # dv2_mag = v_final - vpt
+    #
+    # dv1_vec = np.array([dv1_mag, 0, 0])
+    # dv1_vec = euler313(dv1_vec, 0, 0, f0 - np.pi - gamma0)
+    #
+    # dv2_vec = np.array([dv2_mag, 0, 0])
+    #
+    # # Compute velocity vector after the maneuvers
+    # dv1_vec = v_hat * dv1_mag
+    # v_transfer_vec = v_vec + dv1_vec
+    # v_mag_capture_kms = mag3(v_transfer_vec)
+    # a, e, i, w, o, f = inertial_to_keplerian_3d(np.hstack((r_vec, v_transfer_vec)), gm)
+    # gamma_para = gamma
+    # n = (gm / a ** 3) ** 0.5
+    # E = E_from_f_e(f, e)
+    # M = M_from_E_e(E, e)
+    # dt = abs(fix_angle(M)) / n
+    dv1_vec = np.zeros(3)
+    dv2_vec = np.zeros(3)
+    tof = 0.
+    maneuvers = [dv1_vec, dv2_vec, tof]
+    return maneuvers
+
+
+# Not finished - not needed at this time
+def _elliptical_low_optimal(state_0: np.ndarray, rp_target: float, per_target: float, gm: float) -> list:
+    """
+    TODO Two options - at apo, adjust peri, then at peri finish the capture; or, at peri, bring apo down to target peri.
+         Is the first option always better?
+    :param state_0:
+    :param rp_target:
+    :return:
+    """
+    dv1_vec = np.zeros(3)
+    dv2_vec = np.zeros(3)
+    tof = 0.
+    maneuvers = [dv1_vec, dv2_vec, tof]
+    return maneuvers
+
+
+# Not finished - not needed at this time
+def _elliptical_high_current(state_0, rp_target: float, per_target: float, gm: float) -> list:
+    """
+    TODO compute new energy and flight path angle required to rotate and resize orbit to be in target orbit. Probably
+         a very expensive option compared to _elliptical_high_optimal().
+    :param state_0:
+    :param rp_target:
+    :param per_target:
+    :return:
+    """
+    # r0_vec, v0_vec = state_0[:3], state_0[3:]
+    # r0_mag, v0_mag = mag3(r0_vec), mag3(v0_vec)
+    # h0_vec = cross(r0_vec, v0_vec)
+    # h0_mag = mag3(h0_vec)
+    # gamma = np.arccos(h0_mag / r0_mag / v0_mag) * np.sign(h0_vec[2])
+    # # gamma = np.dot(r0_vec, v0_vec) / (r0_mag * v0_mag)
+    # ra_target = ra_from_rp_per(rp_target, per_target, gm)
+    # # Option 1: conserve r_vec, gamma; only change v_mag such that ra becomes ra_target
+    # v1_mag = ((2 * gm * ra_target * (1 - ra_target / r0_mag)) / (r0_mag ** 2 * cos(gamma) ** 2 - ra_target ** 2)) ** 0.5
+    # dv1_mag = v1_mag - v0_mag
+    # dv1_vec = v0_vec / v0_mag * dv1_mag
+    # v1_vec = v0_vec + dv1_vec
+    #
+    # # At apoapsis, lower periapsis to target
+    # energy = energy_from_gm_r_v(gm, r0_mag, v1_mag)
+    # a = a_from_gm_energy(gm, energy)
+    # e_vec = e_vec_from_gm_v_r(gm, v1_vec, r0_vec)
+    # e_mag = mag3(e_vec)
+    # rp = rp_from_a_e(a, e_mag)
+    # a, e_mag = a_e_from_rp_ra(rp_target, ra_target)
+    # energy = energy_from_gm_a(gm, a)
+    # v1_mag = v_from_gm_eps_r(gm, energy, r0_mag)
+    # h = h_from_gm_a_e(gm, a, e_mag)
+    # gamma = gamma_from_h_r_v_qcheck(h, r0_mag, v1_mag, r0_vec, v1_vec)
+    # f = f_from_gamma_r_v_gm(gamma, r0_mag, v1_mag, gm)
+    # v1_vec = np.array([sin(gamma), cos(gamma), 0]) * v1_mag
+    # v1_vec = euler313(v1_vec, 0, 0, (f - 0))
+    # dv1_vec = v1_vec - v0_vec
+    # ra = a * (1 + e_mag)
+    # dv2_mag = lower_periapsis(ra, a, rp_target, gm)
+    # a, e, i, w, om, f = inertial_to_keplerian_3d(np.hstack((r0_vec, v1_vec)), gm)
+    # df = np.pi - f
+    # dgamma = 0 - gamma
+    # dv2_vec = v1_vec / v1_mag * dv2_mag
+    # dv2_vec = euler313(dv2_vec, 0, 0, df - dgamma)  # * np.sign(h0_vec[2])
+    # E = np.arctan2(sin(f) * (1 - e * e) ** 0.5, e + cos(f))
+    # M = E - e * sin(E)
+    # per = 2 * np.pi * (a * a * a / gm) ** 0.5
+    # n = 2 * np.pi / per
+    # tof = per / 2 - M / n
+
+    dv1_vec = np.zeros(3)
+    dv2_vec = np.zeros(3)
+    tof = 0.
+    maneuvers = [dv1_vec, dv2_vec, tof]
+    return maneuvers
+
+
+# Not finished - not needed at this time
+def _elliptical_high_optimal(state_0, rp_target: float, per_target: float, gm: float) -> list:
+    """
+    TODO There are two options - at apo adjust peri, then at peri adjust apo; or, vice versa. Calculate both strats and
+         then choose the lower total cost. Is one necessarily better than the other depending on where you are in an
+         orbit? What about tof cost? Maybe just default to doing each maneuver as they come - i.e. if descending, will
+         adjust apoapsis first (arrive at periapsis first), and then adjust periapsis second (arrive at apoapsis second)
+    :param state_0:
+    :param rp_target:
+    :param per_target:
+    :return:
+    """
+    dv1_vec = np.zeros(3)
+    dv2_vec = np.zeros(3)
+    tof = 0.
+    maneuvers = [dv1_vec, dv2_vec, tof]
+    return maneuvers
+
+
 if __name__ == "__main__":
-    test1 = False
+    test1 = False  # Test min_dv_capture
     if test1:
         r = np.random.rand(2) * 4e5 - 2e5
         v = np.random.rand(2) * 4 - 2
         gm = 42328.372
         print(min_dv_capture(r, v, gm))
 
-    test2 = False
+    test2 = False  # Test change_central_body
     if test2:
         r1 = np.array([10000, 5000, 0.])
         v1 = np.array([-3, -4, 0.])
@@ -1040,7 +1803,7 @@ if __name__ == "__main__":
         print(r3)
         print(v3)
 
-    test3 = False
+    test3 = False  # Test mean_to_true_anomaly
     if test3:
         m = 135 * np.pi / 180
         e = 0.1
@@ -1050,7 +1813,7 @@ if __name__ == "__main__":
         ta2 = m + (2 * e - 0.25 * e ** 3) * sin(m) + 1.25 * e ** 2 * sin(2 * m) + 13 / 12 * e ** 3 * sin(3 * m)
         print(ta2)
 
-    test4 = False
+    test4 = False  # Test euler313
     if test4:
         vec = np.array([1, 0, 0], float)
         a = np.pi / 2
@@ -1062,7 +1825,7 @@ if __name__ == "__main__":
         print(euler313(vec, 0, a, a))
         print(euler313(vec, a, a, a))
 
-    test5 = False
+    test5 = False  # Test keplerian to LLA
     if test5:
         gm = u_earth_km3s2
         n = 15.4891975521933 * 2 * np.pi / 24 / 3600  # rad / sec
@@ -1086,9 +1849,211 @@ if __name__ == "__main__":
         print('LLA')
         print([lat, lon, alt])
 
-    test6 = True
+    test6 = False  # Test rotate_vnc_to_inertial_3d
     if test6:
         vec_vnc = np.array([1, 0, 0], float)
         state = np.array([1e8, 0, 0, 0, 29, 0], float)
         vec_i = rotate_vnc_to_inertial_3d(vec_vnc, state)
         print(vec_i)
+
+    test7 = False  # Test capture maneuvers
+    if test7:
+        from scipy import integrate
+        from eom import eom2BP
+        from constants import u_mars_km3s2, r_mars_km
+
+        # state_0 = np.array([10000,  14000, 0., -1,  5, 0])  # ascending, positive momentum
+        # state_0 = np.array([10000,  14000, 0., -1, -5, 0])  # descending, negative momentum
+        # state_0 = np.array([10000, -14000, 0., -1,  5, 0])  # descending, positive momentum
+        state_0 = np.array([10000, -14000, 0., -1, -5, 0])  # ascending, negative momentum
+        r_vec, v_vec = state_0[:3], state_0[3:]
+        gm = u_mars_km3s2
+
+        # Do maneuver
+        rp_target = c.r_mars_km + 500
+        per_target = 10 * 86400
+        maneuvers, *args = _hyperbolic_in_low_current(state_0, rp_target, per_target, gm)
+        if len(args) == 1:
+            state_opt = args[0]
+            state_0 = state_opt
+        elif len(args) == 2 or len(args) == 4:
+            maneuvers = [maneuvers, *args]
+        else:
+            raise ValueError('Unknown or unprepared outputs from capture function.')
+        r_vec, v_vec = state_0[:3], state_0[3:]
+        if len(maneuvers) == 3:
+            dv1_vec, dv2_vec, tof12 = maneuvers
+            dv1_mag, dv2_mag = mag3(dv1_vec), mag3(dv2_vec)
+        else:
+            dv1_vec, dv2_vec, dv3_vec, tof12, tof23 = maneuvers
+            dv1_mag, dv2_mag, dv3_mag = mag3(dv1_vec), mag3(dv2_vec), mag3(dv3_vec)
+
+        print('DV1 mag (km/s):\t\t%f' % abs(dv1_mag))
+        print('DV2 mag (km/s):\t\t%f' % abs(dv2_mag))
+        if len(maneuvers) == 3:
+            print('Total DV mag (km/s):\t%f' % (abs(dv1_mag) + abs(dv2_mag)))
+        else:
+            print('DV3 mag (km/s):\t\t%f' % abs(dv3_mag))
+            print('Total DV mag (km/s):\t%f' % (abs(dv1_mag) + abs(dv2_mag) + abs(dv3_mag)))
+
+        print('\nTime to second maneuver (hr):\t%f' % (tof12 / 3600))
+        if len(maneuvers) > 3:
+            print('Time to third maneuver (hr):\t%f' % (tof23 / 3600))
+
+        tf = 15000.
+        tol = 1e-10
+        traj1 = integrate.solve_ivp(eom2BP, [0, -tf*1], state_0, atol=tol, rtol=tol)
+        traj11 = integrate.solve_ivp(eom2BP, [0, tf*1], state_0, atol=tol, rtol=tol)
+        v_transfer_vec = state_0[3:6] + dv1_vec
+        state_transfer = np.hstack((r_vec, v_transfer_vec))
+        # per_transfer = period_from_inertial(state_transfer, gm)
+        traj2 = integrate.solve_ivp(eom2BP, [0, tof12], state_transfer, atol=tol, rtol=tol)
+        print('vp_hyper actual = %f' % (mag3(traj2.y[3:, -1])))
+        print('rp_hyper actual = %f' % (mag3(traj2.y[:3, -1])))
+
+        vp_hat = traj2.y[3:, -1] / mag3(traj2.y[3:, -1])
+        dv2_necessary = - mag3(dv2_vec) * vp_hat
+        print('dv2_vec actual =')
+        print(dv2_vec)
+        print('dv2_vec necessary =')
+        print(dv2_necessary)
+        v3_vec = traj2.y[3:, -1] + dv2_vec
+        ra_target = ra_from_rp_per(rp_target, per_target, gm)
+        state3 = np.hstack((traj2.y[:3, -1], v3_vec))
+        if len(maneuvers) == 3:
+            tof23 = period_from_inertial(state3, gm, max_time_sec=tf)
+        traj3 = integrate.solve_ivp(eom2BP, [0, tof23], state3, atol=tol, rtol=tol)
+        if len(maneuvers) > 3:
+            v4_vec = traj3.y[3:, -1] + dv3_vec
+            state4 = np.hstack((traj3.y[:3, -1], v4_vec))
+            per4 = period_from_inertial(state4, gm)
+            traj4 = integrate.solve_ivp(eom2BP, [0, tf], state4, atol=tol, rtol=tol)
+
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        circ = plt.Circle((0, 0), r_mars_km, color='red')
+        ax.add_artist(circ)
+        plt.plot(traj1.y[0], traj1.y[1])
+        plt.gca().set_prop_cycle(None)
+        plt.plot(traj11.y[0], traj11.y[1], '--')
+        plt.scatter(traj1.y[0, 0], traj1.y[1, 0])
+        plt.plot(traj2.y[0], traj2.y[1])
+        plt.scatter(traj2.y[0, -1], traj2.y[1, -1])
+        plt.plot(traj3.y[0], traj3.y[1])
+        if len(maneuvers) > 3:
+            plt.scatter(traj3.y[0, -1], traj3.y[1, -1])
+            plt.plot(0, 0)
+            plt.plot(traj4.y[0], traj4.y[1])
+        ax.axis('equal')
+        # x, y = traj2.y[0, -1], traj2.y[1, -1]
+        # plt.quiver(x, y, dv2_vec[0], dv2_vec[1])
+        plt.show()
+
+    test8 = False  # Test _hyperbolic_in_high_current
+    if test8:
+        state_0 = np.array([20000, 20000, 0, -1, 6, 0])
+        rp_target = 3000
+        per_target = 20 * 86400
+        gm = c.u_mars_km3s2
+        maneuvers = _hyperbolic_in_high_current(state_0, rp_target, per_target, gm)
+        [print(m) for m in maneuvers]
+
+    test9 = False  # Test perpendicular line visualization
+    if test9:
+        import numpy as np
+        import matplotlib.pyplot as plt
+
+
+        # A point object that has an x and y coordinate
+        class Point:
+            def __init__(self, x, y):
+                self.x: float = x
+                self.y: float = y
+
+            def __add__(self, p):
+                return Point(self.x + p.x, self.y + p.y)
+
+            def __sub__(self, p):
+                return Point(self.x - p.x, self.y - p.y)
+
+            def __mul__(self, p):
+                return Point(self.x * p, self.y * p)
+
+            def __truediv__(self, p):
+                return Point(self.x / p, self.y / p)
+
+            def dot(self, p):
+                return self.x * p.x + self.y * p.y
+
+            def mag(self):
+                return mag2(self.x, self.y)
+
+
+        # Magnitude of a 2-vector
+        def mag2(x: float, y: float):
+            return (x * x + y * y) ** 0.5
+
+
+        # Plot point of intersection from orthogonal line between two vectors
+        def shortest_distance(a: Point, b: Point, p: Point):
+            num = abs((b.y - a.y) * p.x - (b.x - a.x) * p.y + b.x * a.y - b.y * a.x)
+            den = mag2(b.y - a.y, b.x - a.x)
+            return num / den
+
+
+        test1 = True
+        if test1:
+            a = Point(1, 0)
+            b = Point(2, 2)
+            n = b - a
+            n /= n.mag()
+            p = Point(0.5, 1)
+            d = shortest_distance(a, b, p)
+            print('distance = %f' % d)
+
+            plt.figure()
+            plt.plot([a.x, b.x], [a.y, b.y])
+            plt.scatter(p.x, p.y)
+
+            a_minus_p = a - p
+            ampdnn = n * a_minus_p.dot(n)
+            amp_minus_ampdnn = a_minus_p - ampdnn
+            perp = amp_minus_ampdnn
+            print('mag(perp) = %f' % perp.mag())
+
+            plt.plot([p.x, p.x + perp.x], [p.y, p.y + perp.y])
+            plt.axis('equal')
+            plt.show()
+
+        test2 = True
+        if test2:
+            plt.figure()
+            a = Point(0, 0)
+            p = Point(0, 1)
+            plt.scatter(p.x, p.y)
+            a_minus_p = a - p
+
+            mags = list()
+            n_lines = 101
+            for i in range(n_lines):
+                b = Point(np.cos(np.pi / 2 * i / (n_lines - 1)), np.sin(np.pi / 2 * i / (n_lines - 1)))
+                n = b - a
+                n /= n.mag()
+                plt.plot([a.x, b.x], [a.y, b.y])
+                ampdnn = n * a_minus_p.dot(n)
+                amp_minus_ampdnn = a_minus_p - ampdnn
+                perp = amp_minus_ampdnn
+                mags.append(perp.mag())
+                # print('mag(perp) = %f' % perp.mag())
+                plt.plot([p.x, p.x + perp.x], [p.y, p.y + perp.y])
+                plt.scatter(p.x + perp.x, p.y + perp.y)
+            plt.axis('equal')
+            plt.show()
+
+            plt.figure()
+            mags = np.array(mags)
+            angles = np.arange(90, 0, -90 / n_lines)
+            plt.plot(angles, mags)
+            plt.xlabel('Angle between old and new vectors (deg)')
+            plt.ylabel('Normalized Delta V')
+            plt.show()

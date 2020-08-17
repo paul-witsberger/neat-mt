@@ -287,13 +287,14 @@ public:
 								 	 // 0.0});
 
 			// TODO need to properly compute psi, theta, and phi to convert from VNC to inertial
-			double psi, theta, phi;
-			psi = 0.0;
-			theta = 0.0;
-			phi = 0.0;
-			thrust_inertial.assign({ (cos(psi) * cos(phi) - sin(psi) * sin(phi) * cos(theta)) * thrust_body[0] + (cos(psi) * sin(phi) + sin(psi) * cos(theta) * cos(phi)) * thrust_body[1] + (sin(psi) * sin(theta)) * thrust_body[2] },
-								   {-(sin(psi) * cos(phi) - cos(psi) * sin(phi) * cos(theta)) * thrust_body[0] - (sin(psi) * sin(phi) - cos(psi) * cos(theta) * cos(phi)) * thrust_body[1] + (cos(psi) * sin(theta)) * thrust_body[2] },
-								   {                                  (sin(theta) * sin(phi)) * thrust_body[0] -                                  (sin(theta) * cos(phi)) * thrust_body[1] +            (cos(theta)) * thrust_body[2] })
+			// double psi, theta, phi;
+			// psi = 0.0;
+			// theta = 0.0;
+			// phi = 0.0;
+			// thrust_inertial.assign({ (cos(psi) * cos(phi) - sin(psi) * sin(phi) * cos(theta)) * thrust_body[0] + (cos(psi) * sin(phi) + sin(psi) * cos(theta) * cos(phi)) * thrust_body[1] + (sin(psi) * sin(theta)) * thrust_body[2] },
+			// 	{ -(sin(psi) * cos(phi) - cos(psi) * sin(phi) * cos(theta)) * thrust_body[0] - (sin(psi) * sin(phi) - cos(psi) * cos(theta) * cos(phi)) * thrust_body[1] + (cos(psi) * sin(theta)) * thrust_body[2] },
+			// 	{ (sin(theta) * sin(phi)) * thrust_body[0] - (sin(theta) * cos(phi)) * thrust_body[1] + (cos(theta)) * thrust_body[2] });
+			thrust_inertial = rotateVNCtoInertial3D(thrust_body, x);
 		}
 
 		// EOMs (3 velocity, 3 accel w/ grav and thrust, 1 mass)

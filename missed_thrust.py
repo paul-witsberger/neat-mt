@@ -36,7 +36,9 @@ def eval_traj_neat(genome: neat.genome.DefaultGenome, config: neat.config.Config
     f = np.ones(num_cases) * np.inf
     for i in range(num_cases):
         # Create a new case based on the given boundary condition boundary conditions
-        y0, yf = make_new_bcs()
+        # y0, yf = make_new_bcs()
+        y0, yf = compute_bcs()
+        y0 = np.hstack((y0, m0))
 
         # Integrate trajectory
         y, miss_ind, full_traj, dv1, dv2 = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du,
@@ -364,8 +366,7 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
             dv1, dv2, tof = lambert_min_dv(gm, y[-2, :3], y[-2, 3:6], yf[:3], yf[3:6])
             change_frame = False
         else:
-            dv1, dv2, tof = min_dv_capture(y[-2, :3], y[-2, 3:6], yf[:3], yf[3:6], u_mars_km3s2,
-                                           r_mars_km + alt_periapsis)
+            dv1, dv2, tof = min_dv_capture(y[-2, :6], yf, u_mars_km3s2, r_mars_km + alt_periapsis)
             change_frame = True
 
         # Compute delta v magnitudes
@@ -376,15 +377,15 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
         ti[-1] = ti[-2] + tof / tu
 
         # Add first delta v
-        y[-2, 3:6] += dv1
         if change_frame:
-            raise NotImplementedError('The ability to change frame has not been implemented in this function.')
-            # change_central_body(dv1, v_)
-            # y[-2, 3:6] -= r_mars_sun
+            state_sun_mars = c.ephem(['a', 'e', 'i', 'w', 'O', 'M'], [target_body], times_jd1950_jc[-2:-1])
+            state_sun_mars = keplerian_to_inertial_3d(state_sun_mars, gm=gm, mean_or_true='mean')
+            y[-2, :6] -= state_sun_mars
+        y[-2, 3:6] += dv1
 
         # Compute mass after maneuver
-        m_penultimate = y[-2, -1] / np.exp(dv1_mag * 1000 / g0_ms2 / isp_chemical) / mu
-        y[-2, -1] = m_penultimate * mu
+        m_penultimate = y[-2, -1] / np.exp(dv1_mag * 1000 / g0_ms2 / isp_chemical)
+        y[-2, -1] = m_penultimate
 
         # Set up integration of Lambert arc
         eom_type = 3  # 2BP only
@@ -396,8 +397,15 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
         traj = tbp.prop(list(y[-2, :-1] / scales[:-1]), [ti[-2], ti[-1]], param, state_size, time_size, param_size,
                         rtol, atol, step_size, int(integrator_type), int(eom_type))
 
+        # Shift back to heliocentric frame
+        if change_frame:
+            y[-2, :6] += state_sun_mars
+            state_sun_mars /= scales[:6]
+            traj = np.array(traj)
+            traj[:, 1:] += state_sun_mars
+
         # Include mass in the state history
-        last_leg = np.hstack((np.array(traj[1:]), m_penultimate * np.ones((len(traj) - 1, 1))))
+        last_leg = np.hstack((np.array(traj[1:]), (m_penultimate / mu) * np.ones((len(traj) - 1, 1))))
 
         # Add last leg to the trajectory history
         full_traj = np.vstack((full_traj, last_leg))
@@ -497,7 +505,9 @@ def calculate_prop_margins(genome: neat.genome.DefaultGenome, config: neat.confi
     ti /= tu
 
     # Create a new case based on the given boundary condition boundary conditions
-    y0, yf = make_new_bcs()
+    # y0, yf = make_new_bcs()
+    y0, yf = compute_bcs()
+    y0 = np.hstack((y0, m0))
     print(y0)
     print(yf)
 

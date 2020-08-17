@@ -1,5 +1,5 @@
 from orbit_util import *
-from traj_config import n_dim, input_frame, input_indices, scales_in, scales_out, gm, out_node_scales, angle_choices, use_multiple_angle_nodes
+from traj_config import n_dim, outputs, input_frame, input_indices, scales_in, scales_out, gm, out_node_scales, angle_choices, use_multiple_angle_nodes
 
 
 class Neurocontroller():
@@ -106,7 +106,7 @@ class Neurocontroller():
         # Get network activations
         out = np.array(self.net.activate(state_scaled)).reshape((1, -1))
         # Convert outputs from angle and throttle to thrust vector
-        if n_dim == 2:
+        if outputs == 2:
             if use_multiple_angle_nodes:  # categorical classification
                 angle_choice = np.argmax(out[0, :-1])
                 alpha = self.get_angle(angle_choice)

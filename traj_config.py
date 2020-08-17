@@ -6,7 +6,7 @@ from datetime import datetime
 
 max_generations = 1000
 
-gm = c.u_sun_km3s2
+gm = c.u_mars_km3s2
 n_dim = 3
 assert n_dim == 2 or n_dim == 3
 # Create logical list for indices of 2D components
@@ -81,9 +81,9 @@ else:
     raise ValueError('Undefined input frame')
 scales_in = np.hstack((scales_in, scales_in, 1., 1.))  # add twice for current plus target, then add 1 for mass, time
 if n_dim == 2:
-    scales_out = np.array([[-np.pi/6, np.pi/6], [0, 1]])  # thrust angle, thrust throttle
+    scales_out = np.array([[-np.pi / 6, np.pi / 6], [0, 1]])  # thrust angle, thrust throttle
 else:
-    scales_out = np.array([[0, 2 * np.pi], [0, 2 * np.pi], [0, 1]])  # alpha, beta, throttle
+    scales_out = np.array([[-np.pi, np.pi], [-np.pi, np.pi], [0, 1]])  # alpha, beta, throttle
 
 # Specify output activation type (NOTE: this does not automatically change with the NEAT config file)
 out_node_scales = np.array([[-1, 1], [-1, 1], [-1, 1]])
@@ -130,19 +130,21 @@ num_outages = 0
 # Specify the indices of the input array that should be used
 # input_indices = np.array([0, 1, 2, 3, 8, 9])  # ignore target, 2D [6 nodes]
 input_indices = np.array([0, 1, 3, 4, 6, 7, 9, 10, 12, 13])  # ignore Z components, 3D [10 nodes]
-# input_indices = None
+# input_indices = None  # all
+outputs = 2
 
 # Specify if a Lambert arc should be computed to match the final state
 do_terminal_lambert_arc = False
-terminal_integration_steps = 50
+n_terminal_steps = 50
 position_tol = 0.1  # outer non-dimensional position
+capture_periapsis_alt_km = 100
 
 # Define initial and final bodies and times
 init_body = 'earth'
 target_body = 'mars'
 central_body = 'sun'
 t0_str = '2025 Jan 01 00:00:00'
-tf_str = '2028 Jan 01 00:00:00'
+tf_str = '2027 Apr 01 00:00:00'
 fmt = '%Y %b %d %H:%M:%S'
 ordinal_to_julian = 1721424.5
 t0 = datetime.strptime(t0_str, fmt).toordinal() + ordinal_to_julian

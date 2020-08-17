@@ -1,6 +1,6 @@
 import numpy as np
-from operator import itemgetter
-from numba import njit
+# from operator import itemgetter
+# from numba import njit
 
 # Misc Earth parameters
 solar_constant = np.array(1.361)
@@ -32,6 +32,7 @@ r_sun_km = np.array(695700.)
 r_mercury_km = np.array(2439.7)
 r_venus_km = np.array(6051.8)
 r_earth_km = np.array(6371.0)
+r_moon_km = np.array(1737.4)
 r_mars_km = np.array(3389.5)
 r_jupiter_km = np.array(69911.)
 r_saturn_km = np.array(58232.)
@@ -65,6 +66,7 @@ u_juno_km3s2 = np.array(20000e15) * mu_km3s2kg
 a_mercury_km = 0.38709893 * au_to_km
 a_venus_km = 0.72333199 * au_to_km
 a_earth_km = 1.00000011 * au_to_km
+a_moon_km = np.array(384399)
 a_mars_km = 1.52366231 * au_to_km
 a_jupiter_km = 5.20336301 * au_to_km
 a_saturn_km = 9.53707032 * au_to_km
@@ -250,3 +252,14 @@ def ephem(elems: list, planets: list, times: np.ndarray) -> np.ndarray:
     return np.squeeze(np.array([planet(times) for elem in list(map(_ephemeris.get, elems))
                                 for planet in list(map(elem.get, planets))], float
                                ).reshape((len(elems), len(planets), len(times))))
+
+
+r_soi_mercury = 46 * r_mercury_km
+r_soi_venus = 102 * r_venus_km
+r_soi_earth = 145 * r_earth_km
+r_soi_moon = 38 * r_moon_km
+r_soi_mars = 170 * r_mars_km
+r_soi_jupiter = 687 * r_jupiter_km
+r_soi_saturn = 1025 * r_saturn_km
+r_soi_uranus = 2040 * r_uranus_km
+r_soi_neptune = 3525 * r_neptune_km

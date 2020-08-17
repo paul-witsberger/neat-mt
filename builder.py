@@ -7,7 +7,7 @@ import constants as c
 import traj_config as tc
 from scipy import integrate
 from eom import eom2BP
-from missed_thrust import integrate_func_missed_thrust, make_new_bcs, traj_fit_func
+from missed_thrust import integrate_func_missed_thrust, make_new_bcs, traj_fit_func, compute_bcs
 from plotter import *
 from orbit_util import period_from_inertial, rotate_vnc_to_inertial_3d
 import h5py
@@ -36,7 +36,9 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = False, print_mass: bool 
         thrust_fcn = nc.getThrustVec
 
     # Generate a problem
-    y0, yf = make_new_bcs()
+    # y0, yf = make_new_bcs()
+    y0, yf = compute_bcs()
+    y0 = np.hstack((y0, tc.m0))
 
     # Create time vector
     # ti = np.power(np.linspace(0, 1, num_nodes), 3 / 2) * (tf - t0) + t0
@@ -126,7 +128,11 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = False, print_mass: bool 
     # Remove Lambert arc delta V from final NN-controlled state for fitness calculation
     yf_actual = y[-2, tc.ind_dim]
     yf_actual[tc.n_dim:] -= dv1[:tc.n_dim]
+    # yf_actual = y[-1, tc.ind_dim]
 
+    # TODO figure out why the fitness is so crazy when terminal Lambert arc is performed or not
+    #      ----> switching the first delta v with the frame change made it mostly better - but why is the final plot so garbage?
+    #      ----> compare states at end of integration with no terminal maneuver case
     # Calculate and print fitness
     f, dr, dv = traj_fit_func(yf_actual, yf[tc.ind_dim[:-1]], y0, (y0[-1] - y[-1, -1]) / y0[-1], ti[-1] / ti[-2])
     print('Final fitness = %f' % -f)
@@ -277,7 +283,7 @@ def evaluate_perturbed_trajectory(x_perturbed: np.ndarray, m: np.ndarray, i: int
     del local_dir, config_path, config, fname, genome, net, nc
 
     # Propagate for number of steps
-    y0, yf = x_perturbed[first_point * tc.n_dim * 2:(first_point + 1) * tc.n_dim * 2], make_new_bcs()[-1]
+    y0, yf = x_perturbed[first_point * tc.n_dim * 2:(first_point + 1) * tc.n_dim * 2], compute_bcs()[-1]
     if tc.n_dim == 2:
         y0 = np.insert(y0, 2, 0.)
         y0 = np.insert(y0, 5, 0.)
