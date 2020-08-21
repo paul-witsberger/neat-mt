@@ -258,9 +258,14 @@ class Trajectory:
                 self.dv1, self.dv2, tof = ou.lambert_min_dv(tc.gm, self.unscaled_states[-self.extra_nodes - 1], yf)
                 change_frame = False
             else:
-                # TODO fix min_dv_capture - I'm pretty sure the second impulse is being calculated incorrectly
-                self.dv1, self.dv2, tof = ou.min_dv_capture(self.unscaled_states[-self.extra_nodes - 1], yf,
-                                                            c.u_mars_km3s2, c.r_mars_km + tc.capture_periapsis_alt_km)
+                # # TODO fix min_dv_capture - I'm pretty sure the second impulse is being calculated incorrectly
+                # self.dv1, self.dv2, tof = ou.min_dv_capture(self.unscaled_states[-self.extra_nodes - 1], yf,
+                #                                             c.u_mars_km3s2, c.r_mars_km + tc.capture_periapsis_alt_km)
+                state_relative = self.unscaled_states[-self.extra_nodes - 1] - yf
+                rp_target = c.r_mars_km + tc.capture_periapsis_alt_km
+                per_target = tc.capture_period_day * c.day_to_sec
+                maneuvers = ou.capture(state_relative, rp_target, per_target, tc.gm, c.r_soi_mars,
+                                       tc.capture_low_not_high, tc.capture_current_not_optimal)
                 change_frame = True
 
             # Compute delta v magnitudes
@@ -351,7 +356,7 @@ class Trajectory:
                       'times': 2,
                       'param': 17 if self.spacecraft.engine_params['variable_power'] else 5}
 
-    def evaluate(self, genome: neat.genome.DefaultGenome = None, config: neat.config.Config =None) -> float:
+    def evaluate(self, genome: neat.genome.DefaultGenome = None, config: neat.config.Config = None) -> float:
         if genome is not None:
             self.spacecraft.set_controller(genome, config)
         self.fitness = np.ones(tc.num_cases) * np.inf

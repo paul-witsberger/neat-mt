@@ -1,4 +1,5 @@
 import numpy as np
+import traj_config as tc
 from constants import au_to_km
 import matplotlib
 matplotlib.use('Agg')
@@ -10,7 +11,7 @@ matplotlib.rcParams['font.sans-serif'] = "Times New Roman"
 matplotlib.rcParams['font.family'] = "serif"
 assert Axes3D
 
-# Plot colors
+# Colors and preferences for the trajectory plot
 initial_color = 'grey'
 initial_point = 'g'
 initial_style = '-.'
@@ -61,7 +62,7 @@ def set_axes_equal(ax):
     set_axes_radius(ax, origin, radius)
 
 
-def plotTraj3D(y: np.ndarray):
+def plot_traj_3d(y: np.ndarray):
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
     ax.plot3D(y[:, 0], y[:, 1], y[:, 2])
@@ -74,11 +75,11 @@ def plotTraj3D(y: np.ndarray):
     plt.show()
 
 
-def plotTraj2D(yout: np.ndarray, show_plot: bool = True, save_plot: bool = False, fname: str = 'tmp_traj_plot',
-               title: str = '', fig_ax=None, label: str = '', start: bool = False, end: bool = False,
-               show_legend: bool = True, scale_distance: bool = True):
+def plot_traj_2d(yout: np.ndarray, show_plot: bool = True, save_plot: bool = False, fname: str = 'tmp_traj_plot',
+                 title: str = '', fig_ax=None, label: str = '', start: bool = False, end: bool = False,
+                 show_legend: bool = True, scale_distance: bool = True):
     """
-    Used for the transfer trajectory.
+    Plots various elements of the trajectory. Behavior changes based on the label.
     :param yout:
     :param show_plot:
     :param save_plot:
@@ -98,24 +99,42 @@ def plotTraj2D(yout: np.ndarray, show_plot: bool = True, save_plot: bool = False
         plt.grid(False)
     else:
         fig, ax = fig_ax
+
     if scale_distance:
         yout_scaled = yout / au_to_km
     else:
         yout_scaled = yout.copy()
+
     ax.scatter(0, 0, c=sun_color, s=sun_size)
-    ax.plot(yout_scaled[:, 0], yout_scaled[:, 1], label=label, zorder=6, c=transfer_color, linewidth=transfer_weight)
-    if start and plot_points:
-        ax.scatter(yout_scaled[0, 0], yout_scaled[0, 1], c=initial_point, label=label+' - Start', s=point_size)
-    if end and plot_points:
-        ax.scatter(yout_scaled[-1, 0], yout_scaled[-1, 1], c=final_point, label=label+' - End', s=point_size)
-    if scale_distance:
-        ax.set_xlabel('X [AU]')
-        ax.set_ylabel('Y [AU]')
+
+    if label == 'Final':
+        color, width, style = final_color, final_weight, final_style
+    elif label == 'Initial':
+        color, width, style = initial_color, initial_weight, initial_style
+    elif label == 'Transfer':
+        color, width, style = transfer_color, transfer_weight, transfer_style
+        if start and plot_points:
+            ax.scatter(yout_scaled[0, 0], yout_scaled[1, 0], c=initial_point, label=label + ' - Start', s=point_size)
+        if end and plot_points:
+            ax.scatter(yout_scaled[0, -1], yout_scaled[1, -1], c=final_point, label=label + ' - End', s=point_size)
+    elif label == 'Target':
+        color, width, style = target_color, target_weight, target_style
+        if end and plot_points:
+            ax.scatter(yout_scaled[0, -1], yout_scaled[1, -1], c=target_point, label=label, s=point_size)
     else:
-        ax.set_xlabel('X [km]')
-        ax.set_ylabel('Y [km]')
-    ax.set_title(title)
+        raise ValueError('Invalid label for plot.')
+
+    ax.plot(yout_scaled[0], yout_scaled[1], label=label, zorder=5, c=color, linewidth=width, linestyle=style)
+
+    if scale_distance:
+        ax.set_xlabel('X [AU]', fontname='Times New Roman')
+        ax.set_ylabel('Y [AU]', fontname='Times New Roman')
+    else:
+        ax.set_xlabel('X [km]', fontname='Times New Roman')
+        ax.set_ylabel('Y [km]', fontname='Times New Roman')
+    ax.set_title(title, fontname='Times New Roman')
     ax.axis('equal')
+    plt.tight_layout()
     if show_legend:
         plt.legend()
     if show_plot:
@@ -125,11 +144,11 @@ def plotTraj2D(yout: np.ndarray, show_plot: bool = True, save_plot: bool = False
     return fig, ax
 
 
-def plotTraj2DStruct(yout, show_plot: bool = True, save_plot: bool = False, fname: str = 'tmp_traj_plot',
-                     title: str = '', fig_ax=None, label: str = '', end: bool = False, show_legend: bool = True,
-                     scale_distance: bool = True):
+def plot_traj_2d_struct(yout, show_plot: bool = True, save_plot: bool = False, fname: str = 'tmp_traj_plot',
+                        title: str = '', fig_ax=None, label: str = '', end: bool = False, show_legend: bool = True,
+                        scale_distance: bool = True):
     """
-    Used for the initial and final orbits.
+    Plots a trajectory that is the output from scipy.integrate() in a structure format.
     :param yout:
     :param show_plot:
     :param save_plot:
@@ -178,8 +197,8 @@ def plotTraj2DStruct(yout, show_plot: bool = True, save_plot: bool = False, fnam
     return fig, ax
 
 
-def plotMassHistory(t: np.ndarray, m: np.ndarray, show_plot: bool = False, save_plot: bool = True,
-                    fname: str = 'tmp_mass_hist', mt_ind: np.ndarray = None):
+def plot_mass_history(t: np.ndarray, m: np.ndarray, show_plot: bool = False, save_plot: bool = True,
+                      fname: str = 'tmp_mass_hist', mt_ind: np.ndarray = None):
     fig = plt.figure()
     ax = fig.add_subplot(111)
     plt.grid(True)
@@ -196,13 +215,13 @@ def plotMassHistory(t: np.ndarray, m: np.ndarray, show_plot: bool = False, save_
         fig.savefig(fname, dpi=300)
 
 
-def plotThrustHistory(t: np.ndarray, thrust_vec: np.ndarray, T_max_kN: float, show_plot: bool = False,
-                      save_plot: bool = True, fname: str = 'tmp_thrust_hist', mt_ind: np.ndarray = None):
+def plot_thrust_history(t: np.ndarray, thrust_vec: np.ndarray, show_plot: bool = False, save_plot: bool = True,
+                        fname: str = 'tmp_thrust_hist', mt_ind: np.ndarray = None):
     fig = plt.figure()
     ax1 = fig.add_subplot(211)
     ax2 = fig.add_subplot(212)
     thrust_mag = np.linalg.norm(thrust_vec, axis=1)
-    throttle = thrust_mag / T_max_kN
+    throttle = thrust_mag / tc.T_max_kN
     angle = np.rad2deg(np.arctan2(thrust_vec[:, 1], thrust_vec[:, 0]))
     ax1.step(t, throttle, where='post')
     ax1.set_title('Throttle')

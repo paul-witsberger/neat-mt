@@ -6,7 +6,7 @@ from datetime import datetime
 
 max_generations = 1000
 
-gm = c.u_mars_km3s2
+gm = c.u_sun_km3s2
 n_dim = 3
 assert n_dim == 2 or n_dim == 3
 # Create logical list for indices of 2D components
@@ -98,8 +98,8 @@ n_hid = 4
 n_out = 2
 
 # Define integration parameters
-rtol = 1e-9       # relative tolerance
-atol = 1e-9       # absolute tolerance
+rtol = 1e-7       # relative tolerance
+atol = 1e-7       # absolute tolerance
 num_nodes = 200   # number of thrust updates
 n_steps = 20      # substeps between two nodes
 
@@ -138,6 +138,9 @@ do_terminal_lambert_arc = False
 n_terminal_steps = 50
 position_tol = 0.1  # outer non-dimensional position
 capture_periapsis_alt_km = 100
+capture_period_day = 10
+capture_low_not_high = False  # If true, capture into low circular orbit; if false, capture into high elliptic orbit
+capture_current_not_optimal = True  # If true, capture at current location; if false, capture at optimal point on orbit
 
 # Define initial and final bodies and times
 init_body = 'earth'
@@ -159,3 +162,4 @@ du = max(a0_max, af_max)
 tu = (du ** 3 / gm) ** 0.5
 mu = m0
 fu = mu * du / tu / tu
+state_scales = [du, du, du, du / tu, du / tu, du / tu, mu]
