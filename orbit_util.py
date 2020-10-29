@@ -1,12 +1,18 @@
 import numpy as np
 from numpy import cos, sin
-from math import gamma
+# from math import gamma
+import math
 from traj_config import gm
-from numba import njit
+import traj_config as tc
+from numba import njit, vectorize, float64
 from copy import copy
 from constants import ephem, sec_to_day, year_to_sec, reference_date_jd1950, day_to_jc, u_earth_km3s2
 import constants as c
-# from typing import Union
+import boost_tbp
+import warnings
+
+
+tbp = boost_tbp.TBP()
 
 
 @njit
@@ -88,20 +94,19 @@ def period_from_inertial(state: np.ndarray, gm: float = gm, max_time_sec: float 
     r_vec, v_vec = state[:3], state[3:]
     r, v = mag3(r_vec), mag3(v_vec)
 
+    eps = v * v / 2 - gm / r
+
     # Eccentricity
     e_vec = ((v * v - gm / r) * r_vec - np.dot(r_vec, v_vec) * v_vec) / gm
     e = mag3(e_vec)
-    eps = v * v / 2 - gm / r
 
     # Semi-major axis
     tol = 1e-6
     if e < (1 - tol):
         a = - gm / 2 / eps
-        per = 2 * np.pi * (a * a * a / gm) ** 0.5
+        return 2 * np.pi * (a * a * a / gm) ** 0.5
     else:
-        per = max_time_sec
-
-    return per
+        return max_time_sec
 
 
 @njit
@@ -164,7 +169,7 @@ def inertial_to_keplerian(state: np.ndarray, gm: float = gm) -> np.ndarray:
     return np.array([a1, a2, e1, e2, w1, w2, ta1, ta2, mr, tr])
 
 
-# @njit
+@njit
 def inertial_to_local_2d(state: np.ndarray) -> np.ndarray:
     """
     Convert a 2D state vector from inertial to (r, theta) frame.
@@ -195,12 +200,11 @@ def inertial_to_keplerian_2d(state: np.ndarray, gm: float = gm) -> np.ndarray:
     p = r / gm * (v * v) * r * np.cos(fpa) ** 2
     e = np.sqrt(1 - min(p / a, 1.0))
     if e < 1e-6:
-        arg = np.sign(p / r - 1)
         w = 0
         ta = th
     else:
         arg = (p / r - 1) / e
-        if np.abs(arg) > 1:
+        if abs(arg) > 1:
             arg = np.sign(arg)
         ta = np.arccos(arg) * np.sign(fpa + 1e-8)
         w = fix_angle(th - ta)
@@ -221,7 +225,7 @@ def cross(left: np.ndarray, right: np.ndarray) -> np.ndarray:
     return np.array([x, y, z])
 
 
-# @njit
+@njit
 def inertial_to_keplerian_3d(state: np.ndarray, gm: float = gm) -> np.ndarray:
     """
     Convert a 3D state vector from inertial to Keplerian
@@ -235,7 +239,7 @@ def inertial_to_keplerian_3d(state: np.ndarray, gm: float = gm) -> np.ndarray:
     v = mag3(v_vec)
     h_vec = cross(r_vec, v_vec)
     h = mag3(h_vec)
-    k_vec = np.array([0, 0, 1])
+    k_vec = np.array([0., 0, 1])
     n_vec = cross(k_vec, h_vec)
     n = mag3(n_vec)
 
@@ -264,11 +268,11 @@ def inertial_to_keplerian_3d(state: np.ndarray, gm: float = gm) -> np.ndarray:
             om = 2 * np.pi - om
 
     # Argument of periapsis
-    if n == 0 and False:  # TODO verify where this statement came from
-        # Special case - equatorial
-        w = np.arccos(np.dot(np.array([1, 0, 0]), e_vec))
-        # w = 0.
-    elif i < tol or np.abs(np.pi - i) < tol:
+    # if n == 0 and False:  # TODO verify where this statement came from
+    #     # Special case - equatorial
+    #     w = np.arccos(np.dot(np.array([1, 0, 0]), e_vec))
+    #     # w = 0.
+    if i < tol or np.abs(np.pi - i) < tol:
         # Special case: elliptical equatorial - true longitude of periapsis
         w = np.arccos(e_vec[0] / e)
         if e_vec[1] < 0:
@@ -293,12 +297,13 @@ def inertial_to_keplerian_3d(state: np.ndarray, gm: float = gm) -> np.ndarray:
     else:
         # General
         f = np.arccos(max(min(np.dot(e_vec, r_vec) / (e * r), 1.), -1.))
-        if np.dot(r_vec, v_vec) < 0:  # TODO verify this line - I changed this from "<0" to ">0" and then reverted
+        if np.dot(r_vec, v_vec) < 0:
             f = 2 * np.pi - f
 
     return np.array([a, e, i, w, om, f])
 
 
+# TODO njit this
 def keplerian_to_perifocal_3d(state: np.ndarray, gm: float = gm) -> tuple:
     """
     Convert a 3D state vector from Keplerian to perifocal
@@ -313,11 +318,12 @@ def keplerian_to_perifocal_3d(state: np.ndarray, gm: float = gm) -> tuple:
     r13 = np.zeros(int(np.array(state.shape).prod() / 6))
     v11 = -np.sqrt(gm / p) * sin(f)
     v12 = np.sqrt(gm / p) * (e + cos(f))
-    r_p = np.vstack((r11, r12, r13))
+    r_p = np.vstack((r11, r12, r13))  # TODO speed up
     v_p = np.vstack((v11, v12, r13))
     return r_p, v_p
 
 
+# TODO njit this
 def keplerian_to_inertial_3d(state: np.ndarray, gm: float = gm, mean_or_true: str = 'true') -> np.ndarray:
     """
     Convert a 3D state vector from Keplerian to inertial.
@@ -336,9 +342,10 @@ def keplerian_to_inertial_3d(state: np.ndarray, gm: float = gm, mean_or_true: st
     r_p, v_p = keplerian_to_perifocal_3d(state, gm=gm)
     r_i = euler313(r_p, om, i, w)
     v_i = euler313(v_p, om, i, w)
-    return np.hstack((r_i, v_i))
+    return np.hstack((r_i, v_i))  # TODO speed up
 
 
+# TODO njit this
 def keplerian_to_perifocal_2d(state: np.ndarray, gm: float = gm, mean_or_true: str = 'true') -> np.ndarray:
     """
     Convert a 2D state vector from Keplerian to perifocal
@@ -358,6 +365,7 @@ def keplerian_to_perifocal_2d(state: np.ndarray, gm: float = gm, mean_or_true: s
     return np.hstack((r_p, v_p))
 
 
+# TODO njit this
 def keplerian_to_inertial_2d(state: np.ndarray, gm: float = gm, mean_or_true: str = 'true') -> np.ndarray:
     """
     Convert a 2D state vector from Keplerian to inertial
@@ -428,7 +436,7 @@ def mee_to_keplerian_3d(state: np.ndarray) -> np.ndarray:
     return np.array([a, e, i, w, om, v])
 
 
-# @njit
+@njit
 def rotate_vnc_to_inertial_3d(vec: np.ndarray, state: np.ndarray) -> np.ndarray:
     """
     Rotates the current velocity vector to an inertial frame.
@@ -441,7 +449,8 @@ def rotate_vnc_to_inertial_3d(vec: np.ndarray, state: np.ndarray) -> np.ndarray:
     h_vec = cross(r_vec, v_vec)               # angular momentum vector
     n_hat = h_vec / mag3(h_vec)               # angular momentum unit vector; also, normal unit vector
     c_hat = cross(v_hat, n_hat)               # co-normal unit vector
-    dcm = np.vstack((v_hat, n_hat, c_hat)).T  # direction cosine matrix
+    # dcm = np.vstack((v_hat, n_hat, c_hat)).T  # direction cosine matrix
+    dcm = np.vstack((c_hat, v_hat, n_hat)).T  # direction cosine matrix
     return np.dot(dcm, vec)
 
 
@@ -549,20 +558,20 @@ def c2(psi: float) -> float:
     :param psi:
     :return:
     """
-    eps = 1.0
+    eps = 1e-6
     if psi > eps:
-        res = (1 - np.cos(np.sqrt(psi))) / psi
+        res = (1 - math.cos(psi ** 0.5)) / psi
     elif psi < -eps:
-        res = (np.cosh(np.sqrt(-psi)) - 1) / (-psi)
+        # res = (1 - math.cosh((-psi) ** 0.5)) / psi
+        res = -math.exp((-psi) ** 0.5) / 2 / psi
     else:
-        res = 1.0 / 2.0
-        delta = (-psi) / gamma(2 + 2 + 1)
-        k = 1
-        while res + delta != res:
-            res = res + delta
-            k += 1
-            delta = (-psi) ** k / gamma(2 * k + 2 + 1)
-
+        res = 0.5
+        # delta = (-psi) / gamma(2 + 2 + 1)  # TODO what is this crap?
+        # k = 1
+        # while res + delta != res:
+        #     res = res + delta
+        #     k += 1
+        #     delta = (-psi) ** k / gamma(2 * k + 2 + 1)
     return res
 
 
@@ -573,23 +582,24 @@ def c3(psi: float) -> float:
     :param psi:
     :return:
     """
-    eps = 1.0
+    eps = 1e-6
     if psi > eps:
-        res = (np.sqrt(psi) - np.sin(np.sqrt(psi))) / (psi * np.sqrt(psi))
+        res = (psi ** 0.5 - math.sin(psi ** 0.5)) / (psi * psi ** 0.5)
     elif psi < -eps:
-        res = (np.sinh(np.sqrt(-psi)) - np.sqrt(-psi)) / (-psi * np.sqrt(-psi))
+        # res = (math.sinh((-psi) ** 0.5) - (-psi) ** 0.5) / (-psi * (-psi) ** 0.5)
+        res = math.exp((-psi) ** 0.5) / 2. / (-psi ** 3) ** 0.5
     else:
-        res = 1.0 / 6.0
-        delta = (-psi) / gamma(2 + 3 + 1)
-        k = 1
-        while res + delta != res:
-            res = res + delta
-            k += 1
-            delta = (-psi) ** k / gamma(2 * k + 3 + 1)
+        res = 1. / 6.
+        # delta = (-psi) / gamma(2 + 3 + 1)  # TODO what is this crap?
+        # k = 1
+        # while res + delta != res:
+        #     res = res + delta
+        #     k += 1
+        #     delta = (-psi) ** k / gamma(2 * k + 3 + 1)
     return res
 
 
-# @njit
+@njit
 def vallado(k: float, r0: np.ndarray, r: np.ndarray, tof: float, short: bool, numiter: int, rtol: float) \
         -> (np.ndarray, np.ndarray):
     """
@@ -615,49 +625,49 @@ def vallado(k: float, r0: np.ndarray, r: np.ndarray, tof: float, short: bool, nu
 
     cos_dnu = np.dot(r0, r) / norm_r0_times_norm_r
 
-    A = t_m * (norm_r * norm_r0 * (1 + cos_dnu)) ** 0.5
+    A = t_m * (norm_r0_times_norm_r * (1 + cos_dnu)) ** 0.5
+    y = 0.0
 
     if A == 0.0:
         raise RuntimeError("Cannot compute orbit, phase angle is 180 degrees")
 
     psi = 0.0
-    psi_low = -4 * np.pi
+    psi_low = -4 * np.pi ** 2
     psi_up = 4 * np.pi ** 2
-
     count = 0
+    psi_low_increment = 1e-2  # TODO this counter has a large effect on overall runtime if too small (!!!!)
 
     while count < numiter:
         y = norm_r0_plus_norm_r + A * (psi * c3(psi) - 1) / c2(psi) ** 0.5
         if A > 0.0:
-            # Readjust xi_low until y > 0.0
-            # Translated directly from Vallado
-            while y < 0.0:
-                psi_low = psi
-                psi = (
-                    0.8
-                    * (1.0 / c3(psi))
-                    * (1.0 - norm_r0_times_norm_r * np.sqrt(c2(psi)) / A)
-                )
+            # Readjust psi_low until y > 0.0
+            while y < 0.0:  # TODO implement a shooting method here for speed
+                psi_low += psi_low_increment
+                psi = psi_low
+                assert psi_low <= psi <= psi_up, "psi exceeds bounds"
                 y = norm_r0_plus_norm_r + A * (psi * c3(psi) - 1) / c2(psi) ** 0.5
 
-        xi = np.sqrt(y / c2(psi))
-        tof_new = (xi ** 3 * c3(psi) + A * np.sqrt(y)) / np.sqrt(k)
+        xi = (y / c2(psi)) ** 0.5
+        tof_new = (xi ** 3 * c3(psi) + A * y ** 0.5) / k ** 0.5
 
         # Convergence check
         if np.abs((tof_new - tof) / tof) < rtol:
             break
         count += 1
+
         # Bisection check
         condition = tof_new <= tof
-        psi_low = psi_low + (psi - psi_low) * condition
-        psi_up = psi_up + (psi - psi_up) * (not condition)
-
+        if condition:
+            psi_low = psi
+        else:
+            psi_up = psi
         psi = (psi_up + psi_low) / 2
     else:
-        raise RuntimeError("Maximum number of iterations reached")
+        # raise RuntimeError("Maximum number of iterations reached")
+        pass
 
     f = 1 - y / norm_r0
-    g = A * np.sqrt(y / k)
+    g = A * (y / k) ** 0.5
 
     gdot = 1 - y / norm_r
 
@@ -667,19 +677,100 @@ def vallado(k: float, r0: np.ndarray, r: np.ndarray, tof: float, short: bool, nu
     return v0, v
 
 
-def lambert_min_dv(k: float, state: np.ndarray, state_f: np.ndarray, short: bool = True, do_print: bool = False) \
-        -> (np.ndarray, np.ndarray, float):
+def find_min(f, low: float, high: float, num_iter: int = 10):
+    assert high > low
+    coords = np.empty((2, 4))
+    coords[0, :] = [low, (high - low) / 3 + low, (high - low) * 2 / 3 + low, high]
+    _min = np.infty
+    # count = 0
+    for i in range(4):
+        coords[1, i] = f(coords[0, i])
+        # count += 1
+    for i in range(num_iter):
+        _min = min(coords[1])
+        ind_min = np.argmin(coords[1])
+        low = coords[0, max(ind_min - 1, 0)]
+        high = coords[0, min(ind_min + 1, coords.shape[1] - 1)]
+        x_min = coords[0, ind_min]
+        new_coord_low = (x_min - low) / 2 + low
+        new_coord_high = (high - x_min) / 2 + x_min
+        new_pt_low = f(new_coord_low)
+        # count += 1
+        coords = np.insert(coords, ind_min, [new_coord_low, new_pt_low], axis=1)
+        if new_pt_low < _min:
+            continue
+        else:
+            new_pt_high = f(new_coord_high)
+            # count += 1
+            coords = np.insert(coords, ind_min + 2, [new_coord_high, new_pt_high], axis=1)
+    # print('Evaluated %i times' % count)
+    min_x, min_y = coords[0, np.argmin(coords[1])], min(coords[1])
+    return min_x, min_y
+
+
+# Define function to compute dv_mag as a function of TOF
+def _dv_from_tof(tof, t0, targ_planet, gm, r0, v0, short, numiter, rtol):
+    time = tof * c.day_to_jc + t0
+    state_f = c.ephem(['a', 'e', 'i', 'w', 'O', 'M'], [targ_planet], np.array([time]))
+    state_f = keplerian_to_inertial_3d(state_f, gm, 'mean')
+    state_f[[2, 5]] = 0.
+    sol = vallado(gm, r0, state_f[:3], tof * c.day_to_sec, short=short, numiter=numiter, rtol=rtol)
+    return mag3(sol[0] - v0) + hyperbolic_capture_from_infinity(mag3(state_f[3:6] - sol[1]),
+                                                                tc.capture_periapsis_radius_km,
+                                                                tc.capture_period_day * c.day_to_sec,
+                                                                tc.gm_target)
+
+
+# TODO Do I really need to find the min dv TOF, or can I just set it to e.g. 60 days and have the network learn around
+#      that? Because for most of the early and mid stages of training, it will be at the max bound that I set which
+#      will probably be in the ballpark of 60 days.
+def lambert_min_dv(gm: float, state_0: np.ndarray, t0: float, low: float, high: float, max_count: int = 10,
+                   targ_planet: str = tc.target_body, short: bool = True) -> (np.ndarray, np.ndarray, float):
+    """
+    Computes the minimum delta V transfer between two states assuming a two-impulse maneuver.
+    :param gm:
+    :param state_0:
+    :param t0:
+    :param low:
+    :param high:
+    :param targ_planet:
+    :param short:
+    :return:
+    """
+    # Define/initialize parameters for search
+    r0, v0 = state_0[:3], state_0[3:6]
+
+    # Fill in all inputs except TOF
+    t0 *= c.sec_to_day * c.day_to_jc
+    f = lambda tof: _dv_from_tof(tof, t0, targ_planet, gm, r0, v0, short, tc.vallado_numiter, tc.vallado_rtol)
+
+    # Find minimum dv TOF
+    tof_of_min_dv, min_dv = find_min(f, low, high, num_iter=max_count)
+
+    # Recompute best case to get dv vectors
+    t = tof_of_min_dv * c.day_to_jc + t0
+    state_f = c.ephem(['a', 'e', 'i', 'w', 'O', 'M'], [targ_planet], np.array([t]))
+    state_f = keplerian_to_inertial_3d(state_f, gm, 'mean')
+    state_f[[2, 5]] = 0.
+    sol = vallado(gm, r0, state_f[:3], tof_of_min_dv * c.day_to_sec, short, tc.vallado_numiter, tc.vallado_rtol)
+    dv1 = sol[0] - v0
+    dv2 = state_f[3:6] - sol[1]
+    return dv1, dv2, tof_of_min_dv
+
+
+def _lambert_min_dv(k: float, state_0: np.ndarray, target_planet: str = 'mars', short: bool = True,
+                   do_print: bool = False) -> (np.ndarray, np.ndarray, float):
     """
     Computes the minimum delta V transfer between two states assuming a two-impulse maneuver.
     :param k:
-    :param state:
-    :param state_f:
+    :param state_0:
+    :param target_planet:
     :param short:
     :param do_print:
     :return:
     """
-    r0, v0 = state[:3], state[3:6]
-    rf, vf = state_f[:3], state_f[3:6]
+    r0, v0 = state_0[:3], state_0[3:6]
+    # rf, vf = state_f[:3], state_f[3:6]
     # Define parameters for search
     count = 0
     max_count = 20
@@ -692,13 +783,21 @@ def lambert_min_dv(k: float, state: np.ndarray, state_f: np.ndarray, short: bool
 
     # Compute initial guesses
     tof = [low, (high + low) / 3, (high + low) * 2 / 3, high]
+
+    # Compute corresponding final state at these times
+    times = (tof * c.sec_to_day + c.reference_date_jd1950) * c.day_to_jc
+    states_f = c.ephem(['a', 'e', 'i', 'w', 'O', 'M'], [target_planet], times)
+    states_f = keplerian_to_inertial_3d(states_f, k, 'mean')
+
+
+
     dv = list()
-    for _tof in tof:
+    for _tof, _state_f in zip(tof, states_f):
         try:
-            sol = vallado(k, r0, rf, _tof, short=short, numiter=numiter, rtol=rtol)
+            sol = vallado(k, r0, _state_f[:3], _tof, short=short, numiter=numiter, rtol=rtol)
         except RuntimeError:
             sol = ([10, 10, 10], [10, 10, 10])
-        dv.append(np.linalg.norm((sol[0] - v0)) + np.linalg.norm((sol[1] - vf)))
+        dv.append(np.linalg.norm((sol[0] - v0)) + np.linalg.norm((sol[1] - _state_f[3:6])))
 
     # Adjust bounds and start direction of search
     dv = np.array(dv)
@@ -722,6 +821,10 @@ def lambert_min_dv(k: float, state: np.ndarray, state_f: np.ndarray, short: bool
     # Main loop
     while True:
         tof = (high + low) / 2
+        time = (tof * c.sec_to_day + c.reference_date_jd1950) * c.day_to_jc
+        state_f = c.ephem(['a', 'e', 'i', 'w', 'O', 'M'], [target_planet], time)
+        state_f = keplerian_to_inertial_3d(state_f, k, 'mean')
+        rf, vf = state_f[:3], state_f[3:6]
         if do_print:
             print('TOF = %.3f sec' % tof)
         try:
@@ -827,6 +930,26 @@ def mag3(array: np.ndarray) -> float:
     :return:
     """
     return (array[0] * array[0] + array[1] * array[1] + array[2] * array[2]) ** 0.5
+
+
+@vectorize([float64(float64)])
+def fast_square(elem):
+    """
+    A fast method to square each element of a matrix. NOTE: This is slower when used on a (zero-D) float.
+    :param elem:
+    :return:
+    """
+    return elem * elem
+
+
+@vectorize([float64(float64)])
+def fast_abs(elem):
+    """
+    A fast method to take the absolute value of each element of a matrix. NOTE: This is slower when used on a float.
+    :param elem:
+    :return:
+    """
+    return abs(elem)
 
 
 def true_anomaly_from_r_v(r_vec: np.ndarray, v_vec: np.ndarray) -> float:
@@ -1033,6 +1156,7 @@ def mean_to_true_anomaly(m: float, e: float, tol: float = 1e-8) -> float:
     raise RuntimeError('Newton''s method did not converge.')
 
 
+# TODO can this be njit'd?
 def euler313(vector: np.ndarray, psi: float, theta: float, phi: float) -> np.ndarray:
     dcm = np.array([[cos(psi) * cos(phi) - sin(psi) * sin(phi) * cos(theta),
                      cos(psi) * sin(phi) + sin(psi) * cos(theta) * cos(phi),
@@ -1190,7 +1314,7 @@ def h_from_gm_a_e(gm: float, a: float, e: float) -> float:
 
 
 def gamma_from_h_r_v_qcheck(h: float, r: float, v: float, r_vec: np.ndarray, v_vec: np.ndarray) -> float:
-    return np.arccos(h / r / v) * sign_check(r_vec, v_vec)
+    return np.arccos(max(min(h / r / v, 1), -1)) * sign_check(r_vec, v_vec)
 
 
 def gamma_from_h_r_v(h: float, r: float, v: float) -> float:
@@ -1215,15 +1339,21 @@ def f_from_gamma_r_v_gm(gamma: float, r: float, v: float, gm: float) -> float:
 
 
 def time_to_apoapsis_from_per_M_n(per: float, M: float, n: float) -> float:
-    return per / 2 - M / n
+    frac = M / n
+    half_per = per / 2
+    return (half_per - frac) if half_per > frac else (3 * half_per - frac)
 
 
-def time_to_periapsis_from_M_n(M: float, n: float) -> float:
-    return M / n
+def time_to_periapsis_from_per_M_n(per: float, M: float, n: float) -> float:
+    return per - M / n
 
 
 def H_from_f_e(f: float, e: float) -> float:
     return np.arctanh(sin(f) * (e * e - 1) ** 0.5 / (e + cos(f)))
+
+
+def inc_from_h(h_vec: np.array) -> float:
+    return np.arccos(h_vec[2] / mag3(h_vec))
 
 
 def lower_periapsis(ra_cur: float, a_cur: float, rp_new: float, gm: float) -> float:
@@ -1248,12 +1378,25 @@ def raise_apoapsis(rp_cur: float, a_cur: float, ra_new: float, gm: float) -> flo
     return lower_apoapsis(rp_cur, a_cur, ra_new, gm)
 
 
+@njit
+def v_from_gm_r_rp_gamma(gm: float, r: float, rp: float, gamma: float) -> float:
+    assert r > rp, "Radius is smaller than the target periapsis."
+    return (2 * gm * rp * (1 - rp / r) / (r * r * cos(gamma) ** 2 - rp * rp)) ** 0.5
+
+
+@njit
+def v_from_gm_r_ra_gamma(gm: float, r: float, ra: float, gamma: float) -> float:
+    assert r < ra, "Radius is greater than the target apoapsis."
+    return (2 * gm * ra * (1 - ra / r) / (r * r * cos(gamma) ** 2 - ra * ra)) ** 0.5
+
+
+# TODO
 def capture(state_rel: np.ndarray, rp_target: float, per_target: float, gm: float, r_soi: float, capture_low: bool,
             current: bool) -> list:
     """
     Calls the appropriate function to capture a spacecraft around the target body based on the spacecraft's current
     orbit. Decisions include starting from hyperbolic or elliptical orbit, targeting a low circular or high elliptical
-    final orbit, starting inside or outside the sphere of influence (hyperbolic only), and whether the maneuver could
+    final orbit, starting inside or outside the sphere of influence, and whether the maneuver could
     occur at the optimal point of the current orbit or force it to be at the current location.
     :param state_rel:
     :param rp_target:
@@ -1270,19 +1413,66 @@ def capture(state_rel: np.ndarray, rp_target: float, per_target: float, gm: floa
     char2 = 'o' if r_mag > r_soi else 'i'
     char3 = 'l' if capture_low else 'h'
     char4 = 'c' if current else 'o'
+    if char1 == 'e' and char2 == 'o':
+        char1 = 'h'
+        warnings.warn('Flipped char1 in capture()')
     capture_type = char1 + char2 + char3 + char4
+    print(capture_type)
     capture_methods = {'holc': _hyperbolic_out_low_current,  'holo': _hyperbolic_out_low_optimal,
                        'hilc': _hyperbolic_in_low_current,   'hilo': _hyperbolic_in_low_optimal,
                        'hohc': _hyperbolic_out_high_current, 'hoho': _hyperbolic_out_high_optimal,
                        'hihc': _hyperbolic_in_high_current,  'hiho': _hyperbolic_in_high_optimal,
-                       'eilc': _elliptical_low_current,      'eilo': _elliptical_low_optimal,
-                       'eihc': _elliptical_high_current,     'eiho': _elliptical_high_optimal}
+                       # 'eolc': _elliptical_out_low_current,  'eolo': _elliptical_out_low_optimal,
+                       'eilc': _elliptical_in_low_current,   'eilo': _elliptical_in_low_optimal,
+                       # 'eohc': _elliptical_out_high_current, 'eoho': _elliptical_out_high_optimal,
+                       'eihc': _elliptical_in_high_current,  'eiho': _elliptical_in_high_optimal}
     maneuvers = capture_methods[capture_type](state_rel, rp_target, per_target, gm)
     return maneuvers
 
 
-# TODO finish implementing me
-def propagate_capture(maneuvers, state_0):
+def get_capture_final_values(maneuvers: list, m0: float) -> (float, float):
+    """
+    Takes the maneuvers from capture() and computes the final mass and time after the capture. Does not compute states.
+    :param maneuvers:
+    :param m0:
+    :return:
+    """
+    maneuvers, *args = maneuvers
+    if len(args) == 2 or len(args) == 4:
+        maneuvers = [maneuvers, *args]
+    elif len(args) != 1:
+        raise ValueError('Unknown or unprepared outputs from capture function.')
+
+    if len(maneuvers) == 3:
+        dv1_vec, dv2_vec, tof12 = maneuvers
+        dv3_vec, tof23 = np.zeros(3), 0.
+        dv1_mag, dv2_mag, dv3_mag = mag3(dv1_vec), mag3(dv2_vec), 0.
+    else:
+        dv1_vec, dv2_vec, dv3_vec, tof12, tof23 = maneuvers
+        dv1_mag, dv2_mag, dv3_mag = mag3(dv1_vec), mag3(dv2_vec), mag3(dv3_vec)
+
+    m1 = m0 / np.exp(dv1_mag * 1000 / c.g0_ms2 / tc.isp_chemical)
+    m2 = m1 / np.exp(dv2_mag * 1000 / c.g0_ms2 / tc.isp_chemical)
+    m3 = m2 / np.exp(dv3_mag * 1000 / c.g0_ms2 / tc.isp_chemical)
+
+    tf = tof12 + tof23
+
+    return tf, m3
+
+
+# TODO account for tof01, which is the time to go from current location to the initial maneuver
+def propagate_capture(maneuvers: list, state_0: np.ndarray, m0: float, du: float = 20000., gm: float = tc.gm)\
+        -> (np.ndarray, np.ndarray, np.ndarray):
+    """
+    Takes the maneuvers from capture() and generates the corresponding state history. state_0 and m0 are the state
+    (position and velocity only) and the mass at the end of trajectory propagation.
+    :param maneuvers:
+    :param state_0:
+    :param m0:
+    :param du:
+    :param gm:
+    :return:
+    """
     maneuvers, *args = maneuvers
     if len(args) == 1:
         state_opt = args[0]
@@ -1291,40 +1481,80 @@ def propagate_capture(maneuvers, state_0):
         maneuvers = [maneuvers, *args]
     else:
         raise ValueError('Unknown or unprepared outputs from capture function.')
-    r_vec, v_vec = state_0[:3], state_0[3:]
+
     if len(maneuvers) == 3:
         dv1_vec, dv2_vec, tof12 = maneuvers
-        # dv1_mag, dv2_mag, dv3_mag = mag3(dv1_vec), mag3(dv2_vec), 0., 0.
         dv3_vec, tof23 = np.zeros(3), 0.
+        dv1_mag, dv2_mag, dv3_mag = mag3(dv1_vec), mag3(dv2_vec), 0.
+        n_maneuvers = 2
     else:
         dv1_vec, dv2_vec, dv3_vec, tof12, tof23 = maneuvers
-        # dv1_mag, dv2_mag, dv3_mag = mag3(dv1_vec), mag3(dv2_vec), mag3(dv3_vec)
+        dv1_mag, dv2_mag, dv3_mag = mag3(dv1_vec), mag3(dv2_vec), mag3(dv3_vec)
+        n_maneuvers = 3
+    y = np.empty((n_maneuvers, 7))
+    full_traj = np.empty(((n_maneuvers - 1) * tc.n_terminal_steps + 1, 8))
+    # ti = np.empty(n_maneuvers + 1)
 
-    tf = 15000.
-    tol = 1e-10
-    traj1 = integrate.solve_ivp(eom2BP, [0, -tf * 1], state_0, atol=tol, rtol=tol)  # Backwards in time along "original"
-    traj11 = integrate.solve_ivp(eom2BP, [0, tf * 1], state_0, atol=tol, rtol=tol)  # Forwards in time along "original"
-    v_transfer_vec = state_0[3:6] + dv1_vec
-    state_transfer = np.hstack((r_vec, v_transfer_vec))
-    # per_transfer = period_from_inertial(state_transfer, gm)
-    traj2 = integrate.solve_ivp(eom2BP, [0, tof12], state_transfer, atol=tol, rtol=tol)
+    # Compute masses after each maneuver
+    m1 = m0 / np.exp(dv1_mag * 1000 / c.g0_ms2 / tc.isp_chemical)
+    m2 = m1 / np.exp(dv2_mag * 1000 / c.g0_ms2 / tc.isp_chemical)
+    m3 = m2 / np.exp(dv3_mag * 1000 / c.g0_ms2 / tc.isp_chemical)
 
-    vp_hat = traj2.y[3:, -1] / mag3(traj2.y[3:, -1])
-    dv2_necessary = - mag3(dv2_vec) * vp_hat
-    v3_vec = traj2.y[3:, -1] + dv2_vec
-    ra_target = ra_from_rp_per(rp_target, per_target, gm)
-    state3 = np.hstack((traj2.y[:3, -1], v3_vec))
-    if len(maneuvers) == 3:
-        tof23 = period_from_inertial(state3, gm, max_time_sec=tf)
-    traj3 = integrate.solve_ivp(eom2BP, [0, tof23], state3, atol=tol, rtol=tol)
-    if len(maneuvers) > 3:
-        v4_vec = traj3.y[3:, -1] + dv3_vec
-        state4 = np.hstack((traj3.y[:3, -1], v4_vec))
-        per4 = period_from_inertial(state4, gm)
-        traj4 = integrate.solve_ivp(eom2BP, [0, tf], state4, atol=tol, rtol=tol)
+    tu = (du ** 3 / gm) ** 0.5
+    state_scales = np.array([du, du, du, du / tu, du / tu, du / tu])
+    step_type, eom_type = 0, 3  # fixed step, TBP only
+
+    state_1, state_2, state_3 = np.empty((3, 6))
+
+    # Before and after initial maneuver on "original" orbit
+    # traj01m = tbp.prop(list(state_0 / state_scales), [0., -tf / tu], [], 6, 2, 0, tol, tol, step_size / tu, step_type,
+    #                  eom_type)
+    # traj01m = (np.array(traj01m)[:, 1:] * state_scales).T
+    # traj01p = tbp.prop(list(state_0 / state_scales), [0.,  tf / tu], [], 6, 2, 0, tol, tol, step_size / tu, step_type,
+    #                   eom_type)
+    # traj01p = (np.array(traj01p)[:, 1:] * state_scales).T
+
+    # Transfer from initial location to 2nd maneuver location
+    state_1[:3], state_1[3:6] = state_0[:3], state_0[3:6] + dv1_vec
+    traj12 = tbp.prop(list(state_1 / state_scales), [0., tof12 / tu], [], 6, 2, 0, tc.rtol, tc.atol,
+                      tof12 / (tc.n_terminal_steps - 1) / tu, step_type, eom_type)
+    # traj12 = (np.array(traj12)[:, 1:] * state_scales).T
+    traj12 = np.array(traj12)
+
+    # Compute state after 2nd maneuver
+    state_2[:3], state_2[3:6] = traj12[-1, 1:4] * state_scales[:3], traj12[-1, 4:7] * state_scales[3:6] + dv2_vec
+
+    # Compute propagate until 3rd maneuver if necessary, and save states
+    if n_maneuvers == 3:
+        traj23 = tbp.prop(list(state_2 / state_scales), [0., tof23 / tu], [], 6, 2, 0, tc.rtol, tc.atol,
+                          tof23 / (tc.n_terminal_steps - 1) / tu, step_type, eom_type)
+        # traj23 = (np.array(traj23)[:, 1:] * state_scales).T
+        traj23 = np.array(traj23)
+        traj23[:, 0] += tof12 / tu
+
+        state_3[:3], state_3[3:6] = traj23[-1, 1:4] * state_scales[:3], traj23[-1, 4:7] * state_scales[3:6] + dv3_vec
+        y[:, :-1] = state_1, state_2, state_3
+        y[:, -1] = m1, m2, m3
+        full_traj[:-1, :-1] = traj12, traj23
+        full_traj[:tc.n_terminal_steps, -1] = m1 / tc.mu
+        full_traj[tc.n_terminal_steps:-1, -1] = m2 / tc.mu
+        full_traj[-1, :-1] = traj23[-1]
+        full_traj[-1, -1] = m3 / tc.mu
+        # ti[:] = 0, tof12, tof23
+
+    else:
+        y[:, :-1] = state_1, state_2
+        y[:, -1] = m1, m2
+        full_traj[:-1, :-1] = traj12
+        full_traj[:-1, -1] = m1 / tc.mu
+        full_traj[-1, :-1] = traj12[-1]
+        full_traj[-1, -1] = m2 / tc.mu
+        # ti[:] = 0, tof12
+
+    return y, full_traj
 
 
-# Finished - but I may want to change first maneuver
+# Finished - but I may want to change first maneuver # Tested 4
 def _hyperbolic_out_low_current(state_0: np.ndarray, rp_target: float, per_target: float, gm: float) -> list:
     """
     Determine flight path angle that will set periapsis to desired periapsis distance on a parabolic trajectory.
@@ -1336,8 +1566,9 @@ def _hyperbolic_out_low_current(state_0: np.ndarray, rp_target: float, per_targe
     v_mag_para = (2 * gm / r_mag) ** 0.5  # speed along parabolic orbit at current distance
     # Compute new flight path angle (gamma)
     p = 2 * rp_target
-    h_mag = mag3(cross(r_vec, v_vec))
-    gamma = np.arccos(h_mag / r_mag / v_mag) * np.sign(np.dot(r_vec, v_vec))
+    h_vec = cross(r_vec, v_vec)
+    h_mag = mag3(h_vec)
+    gamma = gamma_from_h_r_v_qcheck(h_mag, r_mag, v_mag, r_vec, v_vec)
     n = 2 * (gm / p ** 3) ** 0.5
     B = (2 * r_mag / p - 1) ** 0.5
     tof = (B ** 3 / 3 + + B) / n  # time to periapsis
@@ -1345,35 +1576,41 @@ def _hyperbolic_out_low_current(state_0: np.ndarray, rp_target: float, per_targe
     gamma_para = f / 2
     d_gamma = gamma_para - gamma
     # Use law of cosines to determine dv1_mag and angle of dv1 in VNC coords (alpha)
-    dv1_mag = (v_mag ** 2 + v_mag_para ** 2 - 2 * v_mag * v_mag_para * cos(d_gamma)) ** 0.5
+    dv1_mag = (v_mag ** 2 + v_mag_para ** 2 - 2 * v_mag * v_mag_para * cos(abs(d_gamma))) ** 0.5
     beta = np.arccos((v_mag ** 2 + dv1_mag ** 2 - v_mag_para ** 2) / 2 / v_mag / dv1_mag)
     alpha = np.pi - beta
-    theta = alpha + np.arctan2(r_vec[1], r_vec[0]) + np.pi / 2 - gamma  # TODO how should arctan(y/x) be changed for 3D?
-    dv1_vec = np.array([dv1_mag * cos(theta), dv1_mag * sin(theta), 0])  # TODO how should dv1_vec be changed for 3D?
+    dv1_vec = np.array([cos(alpha), 0, -sin(alpha)]) * dv1_mag # TODO how should dv1_vec be changed for 3D?
+    dv1_vec = rotate_vnc_to_inertial_3d(dv1_vec, state_0)
     v_transfer_vec = v_vec + dv1_vec
     # Compute delta v to get into target orbit at periapsis
     v_final = (gm / rp_target) ** 0.5
     dv2_mag = v_final - vp_para
     # Compute delta v vector and final velocity vector
     v_periapsis_vec = v_transfer_vec / v_mag_para * vp_para
-    v_periapsis_vec = euler313(v_periapsis_vec, 0, 0, - f + gamma_para)
+    df = (0 - f)
+    dgamma = (0 - gamma_para)
+    # Account for sign difference if orbit is "backwards"
+    i = inc_from_h(h_vec)
+    if i > np.pi / 2 or i < - np.pi / 2:
+        df *= -1
+        dgamma *= -1
+    v_periapsis_vec = euler313(v_periapsis_vec, 0, 0, df - dgamma)
     dv2_vec = v_periapsis_vec / vp_para * dv2_mag
     maneuvers = [dv1_vec, dv2_vec, tof]
     return maneuvers
 
 
-# Finished - there *may* be a way to optimally adjust energy and orientation instead of just orientation
+# Finished - there *may* be a way to optimally adjust energy and orientation instead of just orientation # Tested 4
 def _hyperbolic_out_low_optimal(state_0: np.ndarray, rp_target: float, per_target: float, gm: float)\
         -> (list, np.ndarray):
     """
     :param state_0:
     :return:
     """
-    print('bloop')
     # Define initial orbit in Keplerian elements - then determine Cartesian state
     state_kep = inertial_to_keplerian_3d(state_0, gm)
     # Then determine f when r = r_far_away
-    r_far = 10 * c.r_soi_mars
+    r_far = tc.r_limit_soi * c.r_soi_mars
     assert mag3(state_0) < r_far, 'Spacecraft is too far from planet for this capture method to apply.'
     sign = -1
     f_opt = f_from_r_a_e(r_far, state_kep[0], state_kep[1], sign)
@@ -1409,7 +1646,7 @@ def _hyperbolic_out_low_optimal(state_0: np.ndarray, rp_target: float, per_targe
     return maneuvers, state_opt
 
 
-# Finished - but I may want to change first maneuver
+# Finished - but I may want to change first maneuver # Tested 4
 def _hyperbolic_out_high_current(state_0: np.ndarray, rp_target: float, per_target: float, gm: float) -> list:
     """
     :param state_0:
@@ -1421,7 +1658,8 @@ def _hyperbolic_out_high_current(state_0: np.ndarray, rp_target: float, per_targ
     v_mag_para = (2 * gm / r_mag) ** 0.5  # speed along parabolic orbit at current distance
     # Compute new flight path angle (gamma)
     p = 2 * rp_target
-    h_mag = mag3(cross(r_vec, v_vec))
+    h_vec = cross(r_vec, v_vec)
+    h_mag = mag3(h_vec)
     gamma = np.arccos(h_mag / r_mag / v_mag) * np.sign(np.dot(r_vec, v_vec))
     n = 2 * (gm / p ** 3) ** 0.5
     B = (2 * r_mag / p - 1) ** 0.5
@@ -1433,8 +1671,8 @@ def _hyperbolic_out_high_current(state_0: np.ndarray, rp_target: float, per_targ
     dv1_mag = (v_mag ** 2 + v_mag_para ** 2 - 2 * v_mag * v_mag_para * cos(d_gamma)) ** 0.5
     beta = np.arccos((v_mag ** 2 + dv1_mag ** 2 - v_mag_para ** 2) / 2 / v_mag / dv1_mag)
     alpha = np.pi - beta
-    theta = alpha + np.arctan2(r_vec[1], r_vec[0]) + np.pi / 2 - gamma  # TODO how should arctan(y/x) be changed for 3D?
-    dv1_vec = np.array([dv1_mag * cos(theta), dv1_mag * sin(theta), 0])  # TODO how should dv1_vec be changed for 3D?
+    dv1_vec = np.array([cos(alpha), 0, -sin(alpha)]) * dv1_mag  # TODO how should dv1_vec be changed for 3D?
+    dv1_vec = rotate_vnc_to_inertial_3d(dv1_vec, state_0)
     v_transfer_vec = v_vec + dv1_vec
     # Compute delta v to get into target orbit at periapsis
     ra_target = ra_from_rp_per(rp_target, per_target, gm)
@@ -1443,14 +1681,21 @@ def _hyperbolic_out_high_current(state_0: np.ndarray, rp_target: float, per_targ
     dv2_mag = v_final - vp_para
     # Compute delta v vector and final velocity vector
     v_periapsis_vec = v_transfer_vec / v_mag_para * vp_para
-    v_periapsis_vec = euler313(v_periapsis_vec, 0, 0, - f + gamma_para)
+    df = (0 - f)
+    dgamma = (0 - gamma_para)
+    # Account for sign difference if orbit is "backwards"
+    i = inc_from_h(h_vec)
+    if i > np.pi / 2 or i < - np.pi / 2:
+        df *= -1
+        dgamma *= -1
+    v_periapsis_vec = euler313(v_periapsis_vec, 0, 0, df - dgamma)
     dv2_vec = v_periapsis_vec / vp_para * dv2_mag
     maneuvers = [dv1_vec, dv2_vec, tof]
     return maneuvers
 
 
-# Finished - there *may* be a way to optimally adjust energy and orientation instead of just orientation
-def _hyperbolic_out_high_optimal(state_0, rp_target: float, per_target: float, gm: float) -> (list, np.ndarray):
+# Finished - there *may* be a way to optimally adjust energy and orientation instead of just orientation # Tested 4
+def _hyperbolic_out_high_optimal(state_0: np.ndarray, rp_target: float, per_target: float, gm: float) -> (list, np.ndarray):
     """
     :param state_0:
     :return:
@@ -1458,7 +1703,7 @@ def _hyperbolic_out_high_optimal(state_0, rp_target: float, per_target: float, g
     # Define initial orbit in Keplerian elements - then determine Cartesian state
     state_kep = inertial_to_keplerian_3d(state_0, gm)
     # Then determine f when r = r_far_away
-    r_far = 10 * c.r_soi_mars
+    r_far = tc.r_limit_soi * c.r_soi_mars
     sign = -1
     f_opt = f_from_r_a_e(r_far, state_kep[0], state_kep[1], sign)
     state_kep[-1] = f_opt
@@ -1494,7 +1739,7 @@ def _hyperbolic_out_high_optimal(state_0, rp_target: float, per_target: float, g
     return maneuvers, state_opt
 
 
-# Finished
+# Finished # Tested 4 # TODO broken when outside of ra_target
 def _hyperbolic_in_low_current(state_0: np.ndarray, rp_target: float, per_target: float, gm: float) -> list:
     """
     :param state_0:
@@ -1508,7 +1753,7 @@ def _hyperbolic_in_low_current(state_0: np.ndarray, rp_target: float, per_target
     gamma = gamma_from_h_r_v_qcheck(h0_mag, r0_mag, v0_mag, r0_vec, v0_vec)
     ra_target = ra_from_rp_per(rp_target, per_target, gm)
     # Conserve r_vec, gamma; only change v_mag such that ra becomes ra_target
-    v1_mag = ((2 * gm * ra_target * (1 - ra_target / r0_mag)) / (r0_mag ** 2 * cos(gamma) ** 2 - ra_target ** 2)) ** 0.5
+    v1_mag = v_from_gm_r_ra_gamma(gm, r0_mag, ra_target, gamma)
     dv1_mag = v1_mag - v0_mag
     dv1_vec = v0_vec / v0_mag * dv1_mag
     v1_vec = v0_vec + dv1_vec
@@ -1521,8 +1766,7 @@ def _hyperbolic_in_low_current(state_0: np.ndarray, rp_target: float, per_target
 
     # Check that periapsis is above surface
     if rp < rp_target:  # Assume that if rp < rp_target, then rp < r_planet
-        v1_mag = ((2 * gm * rp_target * (1 - rp_target / r0_mag)) /
-                  (r0_mag ** 2 * cos(gamma) ** 2 - rp_target ** 2)) ** 0.5
+        v1_mag = v_from_gm_r_rp_gamma(gm, r0_mag, rp_target, gamma)
         dv1_mag = v1_mag - v0_mag
         dv1_vec = v0_vec / v0_mag * dv1_mag
         v1_vec = v0_vec + dv1_vec
@@ -1571,24 +1815,24 @@ def _hyperbolic_in_low_current(state_0: np.ndarray, rp_target: float, per_target
         H = H_from_f_e(f, e) * sign_check(r0_vec, v1_vec)
         M = e * np.sinh(H) - H
         n = (gm / - a ** 3) ** 0.5
-        tof12 = time_to_periapsis_from_M_n(M, n)
+        per = per_from_gm_a(gm, a)
+        tof12 = time_to_periapsis_from_per_M_n(per, M, n)
 
     if at_periapsis:
         maneuvers = [dv1_vec, dv2_vec, tof12]
     else:
-        # At new periapsis, circularize
-        a = (ra + rp_target) / 2
-        vp_transfer = (gm * (2 / rp_target - 1 / a)) ** 0.5
+        a = a_from_rp_ra(rp_target, ra)
+        vp_transfer = v_from_gm_r_a(gm, rp_target, a)
         dv3_mag = (gm / rp_target) ** 0.5 - vp_transfer
         dv3_vec = dv2_vec / dv2_mag * -dv3_mag
-        per = 2 * np.pi * (a * a * a / gm) ** 0.5
+        per = per_from_gm_a(gm, a)
         tof23 = per / 2
         maneuvers = [dv1_vec, dv2_vec, dv3_vec, tof12, tof23]
 
     return maneuvers
 
 
-# Finished
+# Finished # Tested 4  # TODO possibly broken when outside ra_target
 def _hyperbolic_in_low_optimal(state_0: np.ndarray, rp_target: float, per_target: float, gm: float)\
         -> (list, np.ndarray):
     """
@@ -1604,8 +1848,8 @@ def _hyperbolic_in_low_optimal(state_0: np.ndarray, rp_target: float, per_target
     return maneuvers, state_opt
 
 
-# Finished
-def _hyperbolic_in_high_current(state_0, rp_target: float, per_target: float, gm: float) -> list:
+# Finished # Tested 4 # TODO probably broken when outside ra_target
+def _hyperbolic_in_high_current(state_0: np.ndarray, rp_target: float, per_target: float, gm: float) -> list:
     """
     :param state_0:
     :param rp_target:
@@ -1672,13 +1916,14 @@ def _hyperbolic_in_high_current(state_0, rp_target: float, per_target: float, gm
         H = H_from_f_e(f, e) * sign_check(r0_vec, v1_vec)
         M = e * np.sinh(H) - H
         n = (gm / - a ** 3) ** 0.5
-        tof = time_to_periapsis_from_M_n(M, n)
+        per = per_from_gm_a(gm, a)
+        tof = time_to_periapsis_from_per_M_n(per, M, n)
     maneuvers = [dv1_vec, dv2_vec, tof]
     return maneuvers
 
 
-# Finished
-def _hyperbolic_in_high_optimal(state_0, rp_target: float, per_target: float, gm: float) -> (list, np.ndarray):
+# Finished # Tested 4 # TODO possibly broken when outside ra_target
+def _hyperbolic_in_high_optimal(state_0: np.ndarray, rp_target: float, per_target: float, gm: float) -> (list, np.ndarray):
     """
     :param state_0:
     :param rp_target:
@@ -1692,146 +1937,794 @@ def _hyperbolic_in_high_optimal(state_0, rp_target: float, per_target: float, gm
     return maneuvers, state_opt
 
 
-# Not finished - not needed at this time
-def _elliptical_low_current(state_0: np.ndarray, rp_target: float, per_target: float, gm: float) -> list:
+# Finished # Tested 12 (normal + 2 types of ascending problems)
+def _elliptical_in_low_current(state_0: np.ndarray, rp_target: float, per_target: float, gm: float) -> list:
     """
-    TODO lower energy such that new orbit has a periapsis at target distance, then circularize
-    TODO this implementation is not correct
     :param state_0:
     :param rp_target:
     :return:
     """
-    # r_vec, v_vec = state_0[:3], state_0[3:]
-    # r0, v0 = mag3(r_vec), mag3(v_vec)
-    # a0, e0, i0, w0, om0, f0 = inertial_to_keplerian_3d(np.hstack((r_vec, v_vec)), gm)
-    # eps0 = - gm / 2 / a0
-    # ra0 = a0 * (1 + e0)
-    # va0 = (2 * (eps0 + gm / ra0)) ** 0.5
-    # h0 = (gm * a0 * (1 - e0 * e0)) ** 0.5
-    # gamma0 = np.arccos(h0 / r0 / v0)
-    # gamma0 *= 1 if f0 < np.pi else -1
-    #
-    # at = ra0 + r_final
-    # epst = - gm / 2 / at
-    # vpt = (2 * (epst + gm / r_final)) ** 0.5
-    # vat = (2 * (epst + gm / ra0)) ** 0.5
-    #
-    # dv1_mag = vat - va0
-    # dv2_mag = v_final - vpt
-    #
-    # dv1_vec = np.array([dv1_mag, 0, 0])
-    # dv1_vec = euler313(dv1_vec, 0, 0, f0 - np.pi - gamma0)
-    #
-    # dv2_vec = np.array([dv2_mag, 0, 0])
-    #
-    # # Compute velocity vector after the maneuvers
-    # dv1_vec = v_hat * dv1_mag
-    # v_transfer_vec = v_vec + dv1_vec
-    # v_mag_capture_kms = mag3(v_transfer_vec)
-    # a, e, i, w, o, f = inertial_to_keplerian_3d(np.hstack((r_vec, v_transfer_vec)), gm)
-    # gamma_para = gamma
-    # n = (gm / a ** 3) ** 0.5
-    # E = E_from_f_e(f, e)
-    # M = M_from_E_e(E, e)
-    # dt = abs(fix_angle(M)) / n
-    dv1_vec = np.zeros(3)
-    dv2_vec = np.zeros(3)
-    tof = 0.
-    maneuvers = [dv1_vec, dv2_vec, tof]
-    return maneuvers
+    r0_vec, v0_vec = state_0[:3], state_0[3:]
+    r0_mag, v0_mag = mag3(r0_vec), mag3(v0_vec)
+    h0_vec = cross(r0_vec, v0_vec)
+    h0_mag = mag3(h0_vec)
+    gamma = gamma_from_h_r_v_qcheck(h0_mag, r0_mag, v0_mag, r0_vec, v0_vec)
+    ra_target = ra_from_rp_per(rp_target, per_target, gm)
+    a, e, i, w, om, f = inertial_to_keplerian_3d(state_0, gm)
+    assert e < 1, 'Initial orbit is hyperbolic'
+    ra = ra_from_a_e(a, e)
+    rp = rp_from_a_e(a, e)
+    tmp_state = np.empty(6)
+
+    # Adjust periapsis at current location
+    v1_mag = v_from_gm_r_rp_gamma(gm, r0_mag, rp_target, gamma)
+    if not np.isnan(v1_mag):
+        dv1_mag = v1_mag - v0_mag
+        dv1_vec = v0_vec / v0_mag * dv1_mag
+        v1_vec = v0_vec + dv1_vec
+    # else s/c is coming in too sharply - the periapsis can't be raised while maintaining constant flight path angle
+    else:
+        a, e = a_e_from_rp_ra(rp_target, ra)
+        v1_mag = v_from_gm_r_a(gm, r0_mag, a)
+        h = h_from_gm_a_e(gm, a, e)
+        gamma0 = gamma
+        gamma = gamma_from_h_r_v(h, r0_mag, v1_mag) * -1
+        v1_vec = v0_vec / v0_mag * v1_mag
+        dgamma = gamma - gamma0
+        if inc_from_h(h0_vec) > np.pi / 2:
+            dgamma *= -1
+        v1_vec = euler313(v1_vec, 0, 0, -dgamma)
+        dv1_vec = v1_vec - v0_vec
+
+    # At periapsis, adjust apoapsis
+    energy = energy_from_gm_r_v(gm, r0_mag, v1_mag)
+    if energy > 0 and gamma > 0:
+        # Ascending: maneuvers will be to (attempt to) lower apoapsis at current point
+        #   and then lower periapsis once reaching apoapsis
+        if r0_mag < ra_target:
+            # Conserve r_vec and gamma; only change v_mag such that ra becomes ra_target
+            v1_mag = v_from_gm_r_ra_gamma(gm, r0_mag, ra_target, gamma)
+            dv1_mag = v1_mag - v0_mag
+            dv1_vec = v0_vec / v0_mag * dv1_mag
+            v1_vec = v0_vec + dv1_vec
+
+            # At apoapsis, change periapsis to target altitude
+            energy = energy_from_gm_r_v(gm, r0_mag, v1_mag)
+            a = a_from_gm_energy(gm, energy)
+            dv2_mag = lower_periapsis(ra_target, a, rp_target, gm)
+            tmp_state[:3], tmp_state[3:] = r0_vec, v1_vec
+            a, e, i, w, om, f = inertial_to_keplerian_3d(tmp_state, gm)
+            df1 = np.pi - f
+            dgamma1 = 0 - gamma
+            to_apoapsis = True
+
+            # Check signs
+            if i > np.pi / 2:
+                df1 *= -1
+                dgamma1 *= -1
+
+            # Rotate dv2 vector into correct orientation
+            dv2_vec = v1_vec / v1_mag * dv2_mag
+            dv2_vec = euler313(dv2_vec, 0, 0, df1 - dgamma1)
+
+            # Compute time between maneuvers
+            E = E_from_f_e(f, e)
+            E = fix_angle(E, 2 * np.pi, 0)
+            M = M_from_E_e(E, e)
+            per = per_from_gm_a(gm, a)
+            n = n_from_per(per)
+            if to_apoapsis:
+                tof12 = time_to_apoapsis_from_per_M_n(per, M, n)
+            else:
+                tof12 = time_to_periapsis_from_per_M_n(per, M, n)
+
+            dv3_mag = lower_apoapsis(rp_target, a, rp_target, gm)
+            a, e = a_e_from_rp_ra(rp_target, ra_target)
+            f = np.pi
+            df2 = 2 * np.pi - f
+            dgamma2 = 0
+            to_apoapsis = False
+
+            # Check signs
+            if i > np.pi / 2:
+                df2 *= -1
+                dgamma2 *= -1
+
+            # Rotate dv2 vector into correct orientation
+            dv3_vec = v1_vec / v1_mag * dv3_mag
+            dv3_vec = euler313(dv3_vec, 0, 0, df1 + df2 - dgamma1 - dgamma2)
+
+            # Compute time between maneuvers
+            E = E_from_f_e(f, e)
+            E = fix_angle(E, 2 * np.pi, 0)
+            M = M_from_E_e(E, e)
+            per = per_from_gm_a(gm, a)
+            n = n_from_per(per)
+            if to_apoapsis:
+                tof23 = time_to_apoapsis_from_per_M_n(per, M, n)
+            else:
+                tof23 = time_to_periapsis_from_per_M_n(per, M, n)
+
+            maneuvers = [dv1_vec, dv2_vec, dv3_vec, tof12, tof23]
+            return maneuvers
+
+        # If we're already super far away and ascending and would be hyperbolic, just gotta pull the e-brake and set
+        # current location as new apoapsis
+        else:
+            a = a_from_rp_ra(rp_target, r0_mag)
+            v1_mag = v_from_gm_r_a(gm, r0_mag, a)
+            v1_vec = r0_vec.copy() / r0_mag * v1_mag
+            v1_vec = euler313(v1_vec, 0, 0, np.pi / 2)
+            dv1_vec = v1_vec - v0_vec
+
+            # At periapsis, circularize
+            dv2_mag = lower_apoapsis(rp_target, a, rp_target, gm)
+            tmp_state[:3], tmp_state[3:] = r0_vec, v1_vec
+            i = inc_from_h(cross(r0_vec, v0_vec))
+            df1 = np.pi
+            dgamma1 = 0
+            to_apoapsis = False
+
+            # Check signs
+            if i > np.pi / 2:
+                df1 *= -1
+                dgamma1 *= -1
+
+            # Rotate dv2 vector into correct orientation
+            dv2_vec = v1_vec / v1_mag * dv2_mag
+            dv2_vec = euler313(dv2_vec, 0, 0, df1 - dgamma1)
+
+            # Compute time between maneuvers
+            e = e_from_rp_ra(rp_target, ra_target)
+            E = E_from_f_e(np.pi, e)
+            E = fix_angle(E, 2 * np.pi, 0)
+            M = M_from_E_e(E, e)
+            per = per_from_gm_a(gm, a)
+            n = n_from_per(per)
+            if to_apoapsis:
+                tof12 = time_to_apoapsis_from_per_M_n(per, M, n)
+            else:
+                tof12 = time_to_periapsis_from_per_M_n(per, M, n)
+
+            maneuvers = [dv1_vec, dv2_vec, tof12]
+            return maneuvers
+
+    # # Descending, or above target apoapsis: maneuvers will be to set periapsis to correct altitude at current location,
+    # #     and then lower apoapsis to target altitude once reaching periapsis
+    else:
+
+        a = a_from_gm_energy(gm, energy)
+        dv2_mag = lower_apoapsis(rp_target, a, rp_target, gm)
+        tmp_state[:3], tmp_state[3:] = r0_vec, v1_vec
+        a, e, i, w, om, f = inertial_to_keplerian_3d(tmp_state, gm)
+        # assert e < 1, 'Transfer orbit is hyperbolic'
+        ra = ra_from_a_e(a, e)
+        rp = rp_from_a_e(a, e)
+
+        f = fix_angle(f, 2 * np.pi, 0)
+        df = 2 * np.pi - f
+        dgamma = 0 - gamma
+        # to_apoapsis = False
+
+        # Check signs
+        if i > np.pi / 2:
+            df *= -1
+            dgamma *= -1
+
+        # Rotate dv2 vector into correct orientation
+        dv2_vec = v1_vec / v1_mag * dv2_mag
+        dv2_vec = euler313(dv2_vec, 0, 0, df - dgamma)
+
+        # Compute time between maneuvers
+        E = E_from_f_e(f, e)
+        E = fix_angle(E, 2 * np.pi, 0)
+        M = M_from_E_e(E, e)
+        per = per_from_gm_a(gm, a)
+        n = n_from_per(per)
+        # if to_apoapsis:
+        #     tof = time_to_apoapsis_from_per_M_n(per, M, n)
+        # else:
+        tof = time_to_periapsis_from_per_M_n(per, M, n)
+
+        maneuvers = [dv1_vec, dv2_vec, tof]
+        return maneuvers
 
 
-# Not finished - not needed at this time
-def _elliptical_low_optimal(state_0: np.ndarray, rp_target: float, per_target: float, gm: float) -> list:
+# Finished # Tested 8
+def _elliptical_in_low_optimal(state_0: np.ndarray, rp_target: float, per_target: float, gm: float) -> (list, np.ndarray):
     """
-    TODO Two options - at apo, adjust peri, then at peri finish the capture; or, at peri, bring apo down to target peri.
-         Is the first option always better?
     :param state_0:
     :param rp_target:
     :return:
     """
-    dv1_vec = np.zeros(3)
-    dv2_vec = np.zeros(3)
-    tof = 0.
-    maneuvers = [dv1_vec, dv2_vec, tof]
-    return maneuvers
+    state_kep = inertial_to_keplerian_3d(state_0, gm)
+    state_kep[-1] = np.pi
+    state_opt = keplerian_to_inertial_3d(state_kep, gm)
+    maneuvers = _elliptical_in_low_current(state_opt, rp_target, per_target, gm)
+    return maneuvers, state_opt
 
 
-# Not finished - not needed at this time
-def _elliptical_high_current(state_0, rp_target: float, per_target: float, gm: float) -> list:
+# Finished # Tested 8
+def _elliptical_in_high_current(state_0: np.ndarray, rp_target: float, per_target: float, gm: float) -> list:
     """
-    TODO compute new energy and flight path angle required to rotate and resize orbit to be in target orbit. Probably
-         a very expensive option compared to _elliptical_high_optimal().
     :param state_0:
     :param rp_target:
     :param per_target:
     :return:
     """
-    # r0_vec, v0_vec = state_0[:3], state_0[3:]
-    # r0_mag, v0_mag = mag3(r0_vec), mag3(v0_vec)
-    # h0_vec = cross(r0_vec, v0_vec)
-    # h0_mag = mag3(h0_vec)
-    # gamma = np.arccos(h0_mag / r0_mag / v0_mag) * np.sign(h0_vec[2])
-    # # gamma = np.dot(r0_vec, v0_vec) / (r0_mag * v0_mag)
-    # ra_target = ra_from_rp_per(rp_target, per_target, gm)
-    # # Option 1: conserve r_vec, gamma; only change v_mag such that ra becomes ra_target
-    # v1_mag = ((2 * gm * ra_target * (1 - ra_target / r0_mag)) / (r0_mag ** 2 * cos(gamma) ** 2 - ra_target ** 2)) ** 0.5
-    # dv1_mag = v1_mag - v0_mag
-    # dv1_vec = v0_vec / v0_mag * dv1_mag
-    # v1_vec = v0_vec + dv1_vec
-    #
-    # # At apoapsis, lower periapsis to target
-    # energy = energy_from_gm_r_v(gm, r0_mag, v1_mag)
-    # a = a_from_gm_energy(gm, energy)
-    # e_vec = e_vec_from_gm_v_r(gm, v1_vec, r0_vec)
-    # e_mag = mag3(e_vec)
-    # rp = rp_from_a_e(a, e_mag)
-    # a, e_mag = a_e_from_rp_ra(rp_target, ra_target)
-    # energy = energy_from_gm_a(gm, a)
-    # v1_mag = v_from_gm_eps_r(gm, energy, r0_mag)
-    # h = h_from_gm_a_e(gm, a, e_mag)
-    # gamma = gamma_from_h_r_v_qcheck(h, r0_mag, v1_mag, r0_vec, v1_vec)
-    # f = f_from_gamma_r_v_gm(gamma, r0_mag, v1_mag, gm)
-    # v1_vec = np.array([sin(gamma), cos(gamma), 0]) * v1_mag
-    # v1_vec = euler313(v1_vec, 0, 0, (f - 0))
-    # dv1_vec = v1_vec - v0_vec
-    # ra = a * (1 + e_mag)
-    # dv2_mag = lower_periapsis(ra, a, rp_target, gm)
-    # a, e, i, w, om, f = inertial_to_keplerian_3d(np.hstack((r0_vec, v1_vec)), gm)
-    # df = np.pi - f
-    # dgamma = 0 - gamma
-    # dv2_vec = v1_vec / v1_mag * dv2_mag
-    # dv2_vec = euler313(dv2_vec, 0, 0, df - dgamma)  # * np.sign(h0_vec[2])
-    # E = np.arctan2(sin(f) * (1 - e * e) ** 0.5, e + cos(f))
-    # M = E - e * sin(E)
-    # per = 2 * np.pi * (a * a * a / gm) ** 0.5
-    # n = 2 * np.pi / per
-    # tof = per / 2 - M / n
+    r0_vec, v0_vec = state_0[:3], state_0[3:]
+    r0_mag, v0_mag = mag3(r0_vec), mag3(v0_vec)
+    h0_vec = cross(r0_vec, v0_vec)
+    h0_mag = mag3(h0_vec)
+    gamma = gamma_from_h_r_v_qcheck(h0_mag, r0_mag, v0_mag, r0_vec, v0_vec)
+    ra_target = ra_from_rp_per(rp_target, per_target, gm)
+    a, e, i, w, om, f = inertial_to_keplerian_3d(state_0, gm)
+    assert e < 1, 'Initial orbit is hyperbolic'
+    ra = ra_from_a_e(a, e)
+    rp = rp_from_a_e(a, e)
+    tmp_state = np.empty(6)
 
-    dv1_vec = np.zeros(3)
-    dv2_vec = np.zeros(3)
-    tof = 0.
-    maneuvers = [dv1_vec, dv2_vec, tof]
-    return maneuvers
+    # If the s/c is within acceptable bounds, just leave it - job well done already
+    if ra <= ra_target and rp >= rp_target:
+        dv1_vec = np.zeros(3)
+        dv2_vec = np.zeros(3)
+        tof12 = 0.
+        return [dv1_vec, dv2_vec, tof12]
+
+    # Adjust periapsis at current location
+    v1_mag = v_from_gm_r_rp_gamma(gm, r0_mag, rp_target, gamma)
+    if not np.isnan(v1_mag):
+        dv1_mag = v1_mag - v0_mag
+        dv1_vec = v0_vec / v0_mag * dv1_mag
+        v1_vec = v0_vec + dv1_vec
+    # else s/c is coming in too sharply - the periapsis can't be raised while maintaining constant flight path angle
+    else:
+        a, e = a_e_from_rp_ra(rp_target, ra)
+        v1_mag = v_from_gm_r_a(gm, r0_mag, a)
+        h = h_from_gm_a_e(gm, a, e)
+        gamma0 = gamma
+        gamma = gamma_from_h_r_v(h, r0_mag, v1_mag) * -1
+        v1_vec = v0_vec / v0_mag * v1_mag
+        dgamma = gamma - gamma0
+        if inc_from_h(h0_vec) <= np.pi / 2:
+            dgamma *= -1
+        v1_vec = euler313(v1_vec, 0, 0, dgamma)
+        dv1_vec = v1_vec - v0_vec
+
+    # At periapsis, adjust apoapsis
+    energy = energy_from_gm_r_v(gm, r0_mag, v1_mag)
+    if energy > 0 and gamma > 0:
+        # Ascending: maneuvers will be to (attempt to) lower apoapsis at current point
+        #   and then lower periapsis once reaching apoapsis
+        if r0_mag < ra_target:
+            # Conserve r_vec and gamma; only change v_mag such that ra becomes ra_target
+            v1_mag = v_from_gm_r_ra_gamma(gm, r0_mag, ra_target, gamma)
+            dv1_mag = v1_mag - v0_mag
+            dv1_vec = v0_vec / v0_mag * dv1_mag
+            v1_vec = v0_vec + dv1_vec
+
+            # At apoapsis, change periapsis to target altitude
+            energy = energy_from_gm_r_v(gm, r0_mag, v1_mag)
+            a = a_from_gm_energy(gm, energy)
+            dv2_mag = lower_periapsis(ra_target, a, rp_target, gm)
+            tmp_state[:3], tmp_state[3:] = r0_vec, v1_vec
+            a, e, i, w, om, f = inertial_to_keplerian_3d(tmp_state, gm)
+            df1 = np.pi - f
+            dgamma1 = 0 - gamma
+            to_apoapsis = True
+
+            # Check signs
+            if i > np.pi / 2:
+                df1 *= -1
+                dgamma1 *= -1
+
+            # Rotate dv2 vector into correct orientation
+            dv2_vec = v1_vec / v1_mag * dv2_mag
+            dv2_vec = euler313(dv2_vec, 0, 0, df1 - dgamma1)
+
+            # Compute time between maneuvers
+            E = E_from_f_e(f, e)
+            E = fix_angle(E, 2 * np.pi, 0)
+            M = M_from_E_e(E, e)
+            per = per_from_gm_a(gm, a)
+            n = n_from_per(per)
+            if to_apoapsis:
+                tof12 = time_to_apoapsis_from_per_M_n(per, M, n)
+            else:
+                tof12 = time_to_periapsis_from_per_M_n(per, M, n)
+
+            maneuvers = [dv1_vec, dv2_vec, tof12]
+            return maneuvers
+
+        # If we're already super far away and ascending and would be hyperbolic, just gotta pull the e-brake and set
+        # current location as new apoapsis
+        else:
+            a = a_from_rp_ra(rp_target, r0_mag)
+            v1_mag = v_from_gm_r_a(gm, r0_mag, a)
+            v1_vec = r0_vec.copy() / r0_mag * v1_mag
+            v1_vec = euler313(v1_vec, 0, 0, np.pi / 2)
+            dv1_vec = v1_vec - v0_vec
+
+            # At periapsis, adjust apoapsis
+            dv2_mag = lower_apoapsis(rp_target, a, ra_target, gm)
+            tmp_state[:3], tmp_state[3:] = r0_vec, v1_vec
+            i = inc_from_h(cross(r0_vec, v0_vec))
+            df1 = np.pi
+            dgamma1 = 0
+            to_apoapsis = False
+
+            # Check signs
+            if i > np.pi / 2:
+                df1 *= -1
+                dgamma1 *= -1
+
+            # Rotate dv2 vector into correct orientation
+            dv2_vec = v1_vec / v1_mag * dv2_mag
+            dv2_vec = euler313(dv2_vec, 0, 0, df1 - dgamma1)
+
+            # Compute time between maneuvers
+            e = e_from_rp_ra(rp_target, ra_target)
+            E = E_from_f_e(np.pi, e)
+            E = fix_angle(E, 2 * np.pi, 0)
+            M = M_from_E_e(E, e)
+            per = per_from_gm_a(gm, a)
+            n = n_from_per(per)
+            if to_apoapsis:
+                tof12 = time_to_apoapsis_from_per_M_n(per, M, n)
+            else:
+                tof12 = time_to_periapsis_from_per_M_n(per, M, n)
+
+            maneuvers = [dv1_vec, dv2_vec, tof12]
+            return maneuvers
+
+    # # Descending, or above target apoapsis: maneuvers will be to set periapsis to correct altitude at current location,
+    # #     and then lower apoapsis to target altitude once reaching periapsis
+    else:
+
+        a = a_from_gm_energy(gm, energy)
+        dv2_mag = lower_apoapsis(rp_target, a, ra_target, gm)
+        a, e, i, w, om, f = inertial_to_keplerian_3d(np.hstack((r0_vec, v1_vec)), gm)
+        # assert e < 1, 'Transfer orbit is hyperbolic'
+        ra = ra_from_a_e(a, e)
+        rp = rp_from_a_e(a, e)
+
+        f = fix_angle(f, 2 * np.pi, 0)
+        df = 2 * np.pi - f
+        dgamma = 0 - gamma
+        # to_apoapsis = False
+
+        # Check signs
+        if i > np.pi / 2:
+            df *= -1
+            dgamma *= -1
+
+        # Rotate dv2 vector into correct orientation
+        dv2_vec = v1_vec / v1_mag * dv2_mag
+        dv2_vec = euler313(dv2_vec, 0, 0, df - dgamma)
+
+        # Compute time between maneuvers
+        E = E_from_f_e(f, e)
+        E = fix_angle(E, 2 * np.pi, 0)
+        M = M_from_E_e(E, e)
+        per = per_from_gm_a(gm, a)
+        n = n_from_per(per)
+        # if to_apoapsis:
+        #     tof = time_to_apoapsis_from_per_M_n(per, M, n)
+        # else:
+        tof = time_to_periapsis_from_per_M_n(per, M, n)
+
+        maneuvers = [dv1_vec, dv2_vec, tof]
+        return maneuvers
 
 
-# Not finished - not needed at this time
-def _elliptical_high_optimal(state_0, rp_target: float, per_target: float, gm: float) -> list:
+# Finished # Tested 8
+def _elliptical_in_high_optimal(state_0: np.ndarray, rp_target: float, per_target: float, gm: float) -> (list, np.ndarray):
     """
-    TODO There are two options - at apo adjust peri, then at peri adjust apo; or, vice versa. Calculate both strats and
-         then choose the lower total cost. Is one necessarily better than the other depending on where you are in an
-         orbit? What about tof cost? Maybe just default to doing each maneuver as they come - i.e. if descending, will
-         adjust apoapsis first (arrive at periapsis first), and then adjust periapsis second (arrive at apoapsis second)
     :param state_0:
     :param rp_target:
     :param per_target:
     :return:
     """
-    dv1_vec = np.zeros(3)
-    dv2_vec = np.zeros(3)
-    tof = 0.
-    maneuvers = [dv1_vec, dv2_vec, tof]
+    # dv1_vec = np.zeros(3)
+    # dv2_vec = np.zeros(3)
+    # tof = 0.
+    # maneuvers = [dv1_vec, dv2_vec, tof]
+    # return maneuvers
+
+    state_kep = inertial_to_keplerian_3d(state_0, gm)
+    state_kep[-1] = np.pi
+    state_opt = keplerian_to_inertial_3d(state_kep, gm)
+    maneuvers = _elliptical_in_high_current(state_opt, rp_target, per_target, gm)
+    return maneuvers, state_opt
+
+
+def _get_time_to_maneuver(a, e, f, gm, to_apoapsis):
+    # Compute time between maneuvers
+    if e < 1:  # elliptical
+        E = E_from_f_e(f, e)
+        E = fix_angle(E, 2 * np.pi, 0)
+        M = M_from_E_e(E, e)
+        per = per_from_gm_a(gm, a)
+        n = n_from_per(per)
+        if to_apoapsis:
+            tof = time_to_apoapsis_from_per_M_n(per, M, n)
+        else:
+            tof = time_to_periapsis_from_per_M_n(per, M, n)
+    else:  # hyperbolic
+        H = H_from_f_e(f, e)  # * sign_check(r0_vec, v1_vec)
+        M = e * np.sinh(H) - H
+        n = (gm / - a ** 3) ** 0.5
+        per = per_from_gm_a(gm, -a)
+        tof = time_to_periapsis_from_per_M_n(per, M, n)
+        tof = - M / n  # TODO when to use above line vs. this line?
+    return tof
+
+
+def _get_maneuver_vector(r_vec, v_vec, v_mag, dv_mag, gamma, gm, to_apoapsis):
+    """
+    r_vec, v_vec, v_mag, and gamma all correspond to a known state vector. dv_mag is the magnitude of the dv vector to
+    compute. to_apoapsis defines if the maneuver will occur at periapsis or apoapsis.
+    :param r_vec:
+    :param v_vec:
+    :param v_mag:
+    :param dv_mag:
+    :param gamma:
+    :param gm:
+    :param to_apoapsis:
+    :return:
+    """
+    # Compute orbital elements at after first maneuver
+    tmp_state2 = np.empty(6)
+    tmp_state2[:3], tmp_state2[3:] = r_vec, v_vec
+    # gamma = np.arccos(max(min(mag3(cross(r_vec, v_vec)) / mag3(r_vec) / mag3(v_vec), 1), -1))
+    a, e, i, w, om, f = inertial_to_keplerian_3d(tmp_state2, gm)
+    f = fix_angle(f, 2 * np.pi, 0)
+
+    # Compute change in velocity vector angle
+    if to_apoapsis:
+        df = np.pi - f
+    else:
+        df = 2 * np.pi - f
+    dgamma = 0 - gamma
+
+    # Flip signs if retrograde
+    if i > np.pi / 2:
+        df *= -1
+        dgamma *= -1
+
+    # Rotate dv2 vector into correct orientation
+    dv_vec = v_vec / v_mag * dv_mag
+    dv_vec = euler313(dv_vec, 0, 0, df - dgamma)
+
+    tof = _get_time_to_maneuver(a, e, f, gm, to_apoapsis)
+
+    maneuver = [dv_vec, tof]
+    return maneuver
+
+
+def _get_capture_at_periapsis_magnitude(rp_target, ra_target, a, e, gm, low_not_high):
+    # Compute dv to capture into low or high orbit
+    if low_not_high:  # circularize
+        dv_mag = lower_apoapsis(rp_target, a, rp_target, gm)
+    else:  # lower apoapsis to target - if already lower, don't do anything
+        ra = ra_from_a_e(a, e)
+        if not rp_target <= ra <= ra_target:
+            dv_mag = lower_apoapsis(rp_target, a, ra_target, gm)
+        else:
+            dv_mag = 0.
+    return dv_mag
+
+
+def _in_current(state_0: np.ndarray, rp_target: float, per_target: float, gm: float, low_not_high: bool = True):
+    r0_vec, v0_vec = state_0[:3], state_0[3:]
+    r0_mag, v0_mag = mag3(r0_vec), mag3(v0_vec)
+    h0_vec = cross(r0_vec, v0_vec)
+    h0_mag = mag3(h0_vec)
+    gamma0 = gamma_from_h_r_v_qcheck(h0_mag, r0_mag, v0_mag, r0_vec, v0_vec)
+    ra_target = ra_from_rp_per(rp_target, per_target, gm)
+    a, e, i, w, om, f = inertial_to_keplerian_3d(state_0, gm)
+    f = fix_angle(f, 2 * np.pi, 0)
+    ra = ra_from_a_e(a, e)
+    rp = rp_from_a_e(a, e)
+    tmp_state = np.empty(6)
+
+    # Define some flags to guide logic below
+    is_retrograde = i > np.pi / 2
+    is_hyperbolic = e > 0.997
+    is_descending = gamma0 < 0
+    need_to_raise_rp = rp < rp_target
+    need_to_lower_rp = rp > ra_target
+    need_to_lower_ra = ra > ra_target or is_hyperbolic
+    above_ra_target = r0_mag > ra_target
+
+    # First, start with descending case.
+    # 1. Check that rp > rp_target. If not, do a periapsis raise maneuver at current location. If rp is raised to
+    #       rp_target, then capture after reaching periapsis.
+    # 2. Check that rp < ra_target. If not, at periapsis do a maneuver to set rp to rp_target. At new periapsis, do
+    #       capture maneuver.
+    # 3. Check if hyperbolic or ra > ra_target - if so, then do a maneuver at periapsis to set ra to ra_target.
+    # 4. At apoapsis, do periapsis lower maneuver to set rp to rp_target.
+    # 5. If capturing into a low circular orbit, do a maneuver at rp to circularize.
+
+    # Then look at ascending case.
+    # 6. Check if r < ra_target. If not, do a maneuver to set current location as apoapsis and rp = rp_target. At
+    #       periapsis, capture.
+    # 7. Check that rp_target <= ra <= ra_target. If not, at current location do an apoapsis lower maneuver to set ra to
+    #       ra_target.
+    # 8. Steps 4-5.
+
+    if is_descending:
+        # 1. Check that rp >= rp_target. If not, do a periapsis raise maneuver at current location. If rp is raised to
+        #       rp_target, then capture after reaching periapsis.
+        if need_to_raise_rp:
+            # # Try to adjust periapsis at current location with a tangential burn
+            # v1_mag = v_from_gm_r_rp_gamma(gm, r0_mag, rp_target, gamma0)
+            # # If it worked (returns a real number), compute the maneuver
+            # if not np.isnan(v1_mag):
+            #     dv1_mag = v1_mag - v0_mag
+            #     dv1_vec = v0_vec / v0_mag * dv1_mag
+            #     v1_vec = v0_vec + dv1_vec
+            #     gamma1 = gamma0
+            # # If it failed, the s/c is coming in too sharply, and the periapsis can't be raised enough while maintaining a
+            # # constant flight path angle. Need a non-tangential maneuver to raise periapsis.
+            # else:
+            a, e = a_e_from_rp_ra(rp_target, ra)
+            v1_mag = v_from_gm_r_a(gm, r0_mag, a)
+            h = h_from_gm_a_e(gm, a, e)
+            gamma1 = gamma_from_h_r_v(h, r0_mag, v1_mag) * -1  # we know we're descending
+            v1_vec = v0_vec / v0_mag * v1_mag
+            dgamma = gamma1 - gamma0
+            if is_retrograde:  # account for retrograde orbits
+                dgamma *= -1
+            v1_vec = euler313(v1_vec, 0, 0, -dgamma)
+            dv1_vec = v1_vec - v0_vec
+
+            # Now s/c is en route to rp_target. The next maneuver will be capture at periapsis.
+            energy = energy_from_gm_r_v(gm, r0_mag, v1_mag)
+            a = a_from_gm_energy(gm, energy)
+            dv2_mag = _get_capture_at_periapsis_magnitude(rp_target, ra_target, a, e, gm, low_not_high)
+            dv2_vec, tof12 = _get_maneuver_vector(r0_vec, v1_vec, v1_mag, dv2_mag, gamma1, gm, to_apoapsis=False)
+            maneuvers = [dv1_vec, dv2_vec, tof12]
+
+    # 2. Check that rp <= ra_target. If not, at periapsis do a maneuver to set rp to rp_target. At new periapsis, do
+    #       capture maneuver.
+        elif need_to_lower_rp:
+            # Coast from current point to periapsis
+            dv1_vec = np.zeros(3)
+
+            # At periapsis, set current point as new apoapsis and new periapsis as rp_target
+            dv2_mag = lower_periapsis(rp, a, rp_target, gm)
+            dv2_vec, tof12 = _get_maneuver_vector(r0_vec, v0_vec, v0_mag, dv2_mag, gamma0, gm, to_apoapsis=False)
+            # Compute velocity at original periapsis after maneuver
+            v2_mag = dv2_mag + (2 * gm / rp - gm / a) ** 0.5
+            v2_vec = dv2_vec / dv2_mag * v2_mag
+            r2_mag = rp
+            df = 2 * np.pi - f
+            if is_retrograde:
+                df *= -1
+            r2_vec = euler313(r0_vec, 0, 0, df) / r0_mag * r2_mag
+            gamma2 = 0
+
+            # Now s/c is en route to rp_target. The next maneuver will be capture at periapsis.
+            energy = energy_from_gm_r_v(gm, r2_mag, v2_mag)
+            a = a_from_gm_energy(gm, energy)
+            e = e_from_rp_ra(rp_target, r2_mag)
+            dv3_mag = _get_capture_at_periapsis_magnitude(rp_target, ra_target, a, e, gm, low_not_high)
+            dv3_vec, tof23 = _get_maneuver_vector(r2_vec, v2_vec, v2_mag, dv3_mag, gamma2, gm, to_apoapsis=False)
+            maneuvers = [dv1_vec, dv2_vec, dv3_vec, tof12, tof23]
+
+    # 3. Check if hyperbolic or ra > ra_target - if so, then do a maneuver at periapsis to set ra to ra_target.
+        elif need_to_lower_ra:
+            # Coast from current point to periapsis
+            dv1_vec = np.zeros(3)
+
+            # At periapsis, lower apoapsis to ra_target
+            dv2_mag = lower_apoapsis(rp, a, ra_target, gm)
+            dv2_vec, tof12 = _get_maneuver_vector(r0_vec, v0_vec, v0_mag, dv2_mag, gamma0, gm, to_apoapsis=False)
+
+            # Compute velocity at original periapsis after maneuver
+            a = a_from_rp_ra(rp, ra_target)
+            v2_mag = v_from_gm_r_a(gm, rp, a)
+            v2_vec = dv2_vec / dv2_mag * v2_mag
+            r2_mag = rp
+            df = 0 - f  # (0 - f) vs. (2*np.pi - f)    ???
+            if is_retrograde:
+                df *= -1
+            r2_vec = euler313(r0_vec, 0, 0, df) / r0_mag * r2_mag
+            gamma2 = 0
+
+            # At apoapsis, lower periapsis
+            dv3_mag = lower_periapsis(ra_target, a, rp_target, gm)
+            dv3_vec, tof23 = _get_maneuver_vector(r2_vec, v2_vec, v2_mag, dv3_mag, gamma2, gm, to_apoapsis=True)
+            a = a_from_rp_ra(rp_target, ra_target)
+            v3_mag = v_from_gm_r_a(gm, ra_target, a)
+            v3_vec = dv3_vec / dv3_mag * v3_mag
+            r3_vec = -r2_vec / r2_mag * ra_target
+            gamma3 = 0
+
+            # If necessary, circularize at periapsis
+            if low_not_high:
+                dv4_mag = lower_apoapsis(rp_target, a, rp_target, gm)
+                dv4_vec, tof34 = _get_maneuver_vector(r3_vec, v3_vec, v3_mag, dv4_mag, gamma3, gm, to_apoapsis=False)
+                maneuvers = [dv1_vec, dv2_vec, dv3_vec, dv4_vec, tof12, tof23, tof34]
+                # raise NotImplementedError('Cannot handle 4 maneuvers')
+            else:
+                maneuvers = [dv1_vec, dv2_vec, dv3_vec, tof12, tof23]
+
+    # 4. At apoapsis, do periapsis lower maneuver to set rp to rp_target.
+        else:
+            # Coast from current point to apoapsis
+            dv1_vec = np.zeros(3)
+
+            # At apoapsis, lower periapsis
+            dv2_mag = lower_periapsis(ra, a, rp_target, gm)
+            dv2_vec, tof12 = _get_maneuver_vector(r0_vec, v0_vec, v0_mag, dv2_mag, gamma0, gm, to_apoapsis=True)
+            a = a_from_rp_ra(rp_target, ra)
+            v2_mag = v_from_gm_r_a(gm, ra, a)
+            v2_vec = dv2_vec / dv2_mag * v2_mag
+            r2_mag = ra
+            # df = 2 * np.pi - f
+            df = 0 - f  # TODO when to use 2 * np vs 0 ???
+            if is_retrograde:
+                df *= -1
+            r2_vec = euler313(r0_vec, 0, 0, df) / r0_mag * r2_mag
+            gamma2 = 0
+
+            # If necessary, circularize at periapsis.
+            if low_not_high:
+                dv3_mag = lower_apoapsis(rp_target, a, rp_target, gm)
+                dv3_vec, tof23 = _get_maneuver_vector(r2_vec, v2_vec, v2_mag, dv3_mag, gamma2, gm, to_apoapsis=False)
+                maneuvers = [dv1_vec, dv2_vec, dv3_vec, tof12, tof23]
+            else:
+                maneuvers = [dv1_vec, dv2_vec, tof12]
+
+    else:
+    # 6. Check if r < ra_target. If not, do a maneuver to set current location as apoapsis and rp = rp_target. At
+    #       periapsis, capture.
+        if above_ra_target:
+            a, e = a_e_from_rp_ra(rp_target, r0_mag)
+            v1_mag = v_from_gm_r_a(gm, r0_mag, a)
+            # h = h_from_gm_a_e(gm, a, e)
+            gamma1 = 0
+            dgamma = 0 - np.pi / 2
+            if is_retrograde:  # account for retrograde orbits
+                dgamma *= -1
+            v1_vec = euler313(r0_vec / r0_mag, 0, 0, -dgamma) * v1_mag
+            dv1_vec = v1_vec - v0_vec
+
+            # Now s/c is en route to rp_target. The next maneuver will be capture at periapsis.
+            # energy = energy_from_gm_r_v(gm, r0_mag, v1_mag)
+            # a = a_from_gm_energy(gm, energy)
+            dv2_mag = _get_capture_at_periapsis_magnitude(rp_target, ra_target, a, e, gm, low_not_high)
+            dv2_vec, tof12 = _get_maneuver_vector(r0_vec, v1_vec, v1_mag, dv2_mag, gamma1, gm, to_apoapsis=False)
+            maneuvers = [dv1_vec, dv2_vec, tof12]
+
+    # 7. Check that rp_target <= ra <= ra_target. If not, at current location do an apoapsis lower maneuver to set ra to
+    #       ra_target.
+        elif need_to_lower_ra:
+            a, e = a_e_from_rp_ra(rp, ra_target)
+            v1_mag = v_from_gm_r_a(gm, r0_mag, a)
+            h = h_from_gm_a_e(gm, a, e)
+            gamma1 = gamma_from_h_r_v(h, r0_mag, v1_mag)
+            v1_vec = v0_vec / v0_mag * v1_mag
+            dgamma = gamma1 - gamma0
+            if is_retrograde:  # account for retrograde orbits
+                dgamma *= -1
+            v1_vec = euler313(v1_vec, 0, 0, -dgamma)
+            dv1_vec = v1_vec - v0_vec
+
+            # 8. At apoapsis, do periapsis lower maneuver to set rp to rp_target.
+            # At apoapsis, lower periapsis
+            dv2_mag = lower_periapsis(ra_target, a, rp_target, gm)
+            dv2_vec, tof12 = _get_maneuver_vector(r0_vec, v1_vec, v1_mag, dv2_mag, gamma1, gm, to_apoapsis=True)
+            tmp_state[:3], tmp_state[3:] = r0_vec, v1_vec
+            a, e, i, w, o, f = inertial_to_keplerian_3d(tmp_state, gm)
+            a = a_from_rp_ra(rp_target, ra_target)
+            v2_mag = v_from_gm_r_a(gm, ra_target, a)
+            v2_vec = -dv2_vec / abs(dv2_mag) * v2_mag
+            r2_mag = ra_target
+            df = np.pi - f
+            if is_retrograde:
+                df *= -1
+            r2_vec = euler313(r0_vec / r0_mag * r2_mag, 0, 0, df)
+            gamma2 = np.arccos(max(min(mag3(cross(r2_vec, v2_vec)) / mag3(r2_vec) / mag3(v2_vec), 1), -1))
+
+            # If necessary, circularize at periapsis.
+            if low_not_high:
+                dv3_mag = lower_apoapsis(rp_target, a, rp_target, gm)
+                dv3_vec, tof23 = _get_maneuver_vector(r2_vec, v2_vec, v2_mag, dv3_mag, gamma2, gm, to_apoapsis=False)
+                if need_to_raise_rp:
+                    # Normally, both maneuvers are anti-velocity, but in this case the apoapsis maneuver is parallel to
+                    # velocity, so after rotating vector by pi, need to flip the other way
+                    dv3_vec *= -1
+                maneuvers = [dv1_vec, dv2_vec, dv3_vec, tof12, tof23]
+            else:
+                maneuvers = [dv1_vec, dv2_vec, tof12]
+
+    # Otherwise coast to apoapsis.
+        else:
+            # Coast from current point to apoapsis
+            dv1_vec = np.zeros(3)
+
+            # 8. At apoapsis, do periapsis lower maneuver to set rp to rp_target.
+            # At apoapsis, lower periapsis
+            dv2_mag = lower_periapsis(ra, a, rp_target, gm)
+            dv2_vec, tof12 = _get_maneuver_vector(r0_vec, v0_vec, v0_mag, dv2_mag, gamma0, gm, to_apoapsis=True)
+            a = a_from_rp_ra(rp_target, ra)
+            v2_mag = v_from_gm_r_a(gm, ra, a)
+            v2_vec = dv2_vec / dv2_mag * v2_mag
+            r2_mag = ra
+            df = np.pi - f
+            if is_retrograde:
+                df *= -1
+            r2_vec = euler313(r0_vec, 0, 0, df) / r0_mag * r2_mag
+            gamma2 = 0
+
+            # If necessary, circularize at periapsis.
+            if low_not_high:
+                dv3_mag = lower_apoapsis(rp_target, a, rp_target, gm)
+                dv3_vec, tof23 = _get_maneuver_vector(r2_vec, v2_vec, v2_mag, dv3_mag, gamma2, gm, to_apoapsis=False)
+                maneuvers = [dv1_vec, dv2_vec, dv3_vec, tof12, tof23]
+            else:
+                maneuvers = [dv1_vec, dv2_vec, tof12]
+
     return maneuvers
+
+
+# TODO
+def _out_current():
+    pass
+
+
+# TODO
+def _in_optimal():
+    pass
+
+
+# TODO treat anything outside of sphere of influence as hyperbolic
+# def _out_optimal(state_0: np.ndarray, rp_target: float, per_target: float, gm_central: float, gm_target: float,
+#                  low_not_high: bool = True):
+#     r_vec, v_vec = state_0[:3], state_0[3:6]
+#     r_mag, v_mag = mag3(r_vec), mag3(v_vec)
+#     # compute transfer to target SOI
+#     dv1_vec, dv2_vec, tof12 = lambert_min_dv(gm, state_0, state_f, short=True, do_print=False)
+#
+#     # compute velocity when target reaches SOI
+#     v_soi = 0
+#     # then compute corresponding v_inf
+#     v_rel_soi = v_mars - v_soi
+#     energy = energy_from_gm_r_v(gm_target, c.r_soi_mars, v_rel_soi)
+#     v_inf = (2 * energy) ** 0.5
+#     # compute dv to capture
+#     vp_hyper = (2 * gm_target / rp_target + v_inf * v_inf) ** 0.5
+#     if low_not_high:
+#         vp_capture = (gm_target / rp_target) ** 0.5
+#     else:
+#         a = a_from_gm_per(gm_target, per_target)
+#         vp_capture = v_from_gm_r_a(gm_target, rp_target, a)
+#     dv_mag = vp_hyper - vp_capture
+
+
+# TODO the main still-to-be-solved problem is when I am outside the sphere-of-influence and want to get to it. Mars'
+#          state is a function of time, so if I try to solve the min delta V Lambert arc by adjusting time, I also need
+#          to adjust Mars' state accordingly. I do have the ephem function which could be used. Is this something
+#          normally solved by SQP? Is there a fast solution? Is this where B-plane targeting comes into play?
+# TODO Compare my machine learning missed thrust solution to a perturbation technique for TCMs (see pg. 534 in Battin)?
+#          Is there an advantage to one way or another?
+# TODO What if I had thrust stop some time (e.g. 30 days) before arrival. Then the capture occurs in those 30 days.
+# TODO Look into relative motion/proximity operations for two satellites in orbit. There is no gravity between them but
+#          the problems often involve rendezvous. There are probably relevant anwers to what I'm looking for.
+
+
+def hyperbolic_capture_from_infinity(v_inf: float, rp_target: float, per_target: float, gm: float,
+                                     low_not_high: bool = True) -> float:
+    vp_hyper = (2 * gm / rp_target + v_inf * v_inf) ** 0.5
+    if low_not_high:
+        vp_capture = (gm / rp_target) ** 0.5
+    else:
+        a = a_from_gm_per(gm, per_target)
+        vp_capture = v_from_gm_r_a(gm, rp_target, a)
+    return vp_hyper - vp_capture
 
 
 if __name__ == "__main__":
@@ -1849,10 +2742,10 @@ if __name__ == "__main__":
         v1 = np.array([-3, -4, 0.])
         r2 = np.array([-150000000, 0, 0.])
         v2 = np.array([0, -30, 0.])
-        r3 = change_central_body(r1, r2)
-        v3 = change_central_body(v1, v2)
-        print(r3)
-        print(v3)
+        # r3 = change_central_body(r1, r2)
+        # v3 = change_central_body(v1, v2)
+        # print(r3)
+        # print(v3)
 
     test3 = False  # Test mean_to_true_anomaly
     if test3:
@@ -1907,130 +2800,214 @@ if __name__ == "__main__":
         vec_i = rotate_vnc_to_inertial_3d(vec_vnc, state)
         print(vec_i)
 
-    # TODO turn this into a function(s) for capture() and something to propagate the capture
-    test7 = True  # Test capture maneuvers
+    test7 = False  # Test capture maneuvers
     if test7:
-        from scipy import integrate
-        from eom import eom2BP
-        from constants import u_mars_km3s2, r_mars_km
-        import boost_tbp
-        tbp = boost_tbp.TBP()
-        # state_0 = np.array([10000,  14000, 0., -1,  5, 0])  # ascending, positive momentum
-        # state_0 = np.array([10000,  14000, 0., -1, -5, 0])  # descending, negative momentum
-        # state_0 = np.array([10000, -14000, 0., -1,  5, 0])  # descending, positive momentum
-        state_0 = np.array([10000, -14000, 0., -1, -5, 0])  # ascending, negative momentum
-        r_vec, v_vec = state_0[:3], state_0[3:]
-        gm = u_mars_km3s2
+        def compute_capture_sequence(state_0):
+            # r_vec, v_vec = state_0[:3], state_0[3:]
+            gm = c.u_mars_km3s2
 
-        # Do maneuver
-        rp_target = c.r_mars_km + 500
-        per_target = 10 * 86400
-        maneuvers, *args = _hyperbolic_in_low_current(state_0, rp_target, per_target, gm)
-        if len(args) == 1:
-            state_opt = args[0]
-            state_0 = state_opt
-        elif len(args) == 2 or len(args) == 4:
-            maneuvers = [maneuvers, *args]
+            # Compute capture
+            rp_target = c.r_mars_km + 500
+            per_target = 10 * 86400
+            low_not_high = True
+            # maneuvers, *args = _elliptical_in_high_optimal(state_0, rp_target, per_target, gm)
+            maneuvers, *args = _in_current(state_0, rp_target, per_target, gm, low_not_high)
+
+            # Parse outputs
+            if len(args) == 1:
+                state_opt = args[0]
+                state_0 = state_opt
+            elif len(args) == 2 or len(args) == 4 or len(args) == 6:
+                maneuvers = [maneuvers, *args]
+            else:
+                raise ValueError('Unknown or unprepared outputs from capture function.')
+            r_vec, v_vec = state_0[:3], state_0[3:]
+            if len(maneuvers) == 3:
+                dv1_vec, dv2_vec, tof12 = maneuvers
+                # dv1_mag, dv2_mag = mag3(dv1_vec), mag3(dv2_vec)
+                dv3_vec, dv4_vec, dv3_mag, dv4_mag, tof23, tof34 = np.zeros(3), np.zeros(3), 0, 0, 0, 0
+            elif len(maneuvers) == 5:
+                dv1_vec, dv2_vec, dv3_vec, tof12, tof23 = maneuvers
+                # dv1_mag, dv2_mag, dv3_mag = mag3(dv1_vec), mag3(dv2_vec), mag3(dv3_vec)
+                dv4_vec, dv4_mag, tof34 = np.zeros(3), 0, 0
+            else:
+                dv1_vec, dv2_vec, dv3_vec, dv4_vec, tof12, tof23, tof34 = maneuvers
+                # dv1_mag, dv2_mag, dv3_mag, dv4_mag = mag3(dv1_vec), mag3(dv2_vec), mag3(dv3_vec), mag3(dv4_vec)
+
+            # print('DV1 mag (km/s):\t\t%f' % abs(dv1_mag))
+            # print('DV2 mag (km/s):\t\t%f' % abs(dv2_mag))
+            # if len(maneuvers) == 3:
+            #     print('Total DV mag (km/s):\t%f' % (abs(dv1_mag) + abs(dv2_mag)))
+            # elif len(maneuvers) == 5:
+            #     print('DV3 mag (km/s):\t\t%f' % abs(dv3_mag))
+            #     print('Total DV mag (km/s):\t%f' % (abs(dv1_mag) + abs(dv2_mag) + abs(dv3_mag)))
+            # else:
+            #     print('DV3 mag (km/s):\t\t%f' % abs(dv3_mag))
+            #     print('DV4 mag (km/s):\t\t%f' % abs(dv4_mag))
+            #     print('Total DV mag (km/s):\t%f' % (abs(dv1_mag) + abs(dv2_mag) + abs(dv3_mag) + abs(dv4_mag)))
+            #
+            # print('\nTime to second maneuver (hr):\t%f' % (tof12 / 3600))
+            # if len(maneuvers) > 3:
+            #     print('Time to third maneuver (hr):\t%f' % (tof23 / 3600))
+            #     if len(maneuvers) > 5:
+            #         print('Time to fourth maneuver (hr):\t%f' % (tof34 / 3600))
+
+            tf = 50000.
+            tol = 1e-10
+            e_tol = 1e-4
+            a_tol = 1e-1
+            n_steps = 101
+            du = 20000
+            tu = (du ** 3 / c.u_mars_km3s2) ** 0.5
+            state_scales = np.array([du, du, du, du / tu, du / tu, du / tu])
+            step_type = 1
+            failed = False
+
+            tof0 = period_from_inertial(state_0, gm, max_time_sec=tf)
+            traj1 = tbp.prop(list(state_0 / state_scales), [0., -tof0 / tu], [], 6, 2, 0, tol, tol, tf / n_steps / tu, step_type, 3)
+            traj1 = (np.array(traj1)[:, 1:] * state_scales).T
+            traj11 = []
+            if tof0 == tf:
+                traj11 = tbp.prop(list(state_0 / state_scales), [0., tof0 / tu], [], 6, 2, 0, tol, tol, tf / n_steps / tu, step_type, 3)
+                traj11 = (np.array(traj11)[:, 1:] * state_scales).T
+
+            v_transfer_vec = state_0[3:6] + dv1_vec
+            state_transfer = np.hstack((r_vec, v_transfer_vec))
+            traj2 = tbp.prop(list(state_transfer / state_scales), [0., tof12 / tu], [], 6, 2, 0, tol, tol, tof12 / n_steps / tu, step_type, 3)
+            traj2 = (np.array(traj2)[:, 1:] * state_scales).T
+
+            v3_vec = traj2[3:, -1] + dv2_vec
+            # ra_target = ra_from_rp_per(rp_target, per_target, gm)
+            state3 = np.hstack((traj2[:3, -1], v3_vec))
+            if len(maneuvers) == 3:
+                tof23 = period_from_inertial(state3, gm, max_time_sec=tf)
+            traj3 = tbp.prop(list(state3 / state_scales), [0., tof23 / tu], [], 6, 2, 0, tol, tol, tof23 / n_steps / tu, step_type, 3)
+            traj3 = (np.array(traj3)[:, 1:] * state_scales).T
+            trajs = [traj1, traj11, traj2, traj3]
+            if len(maneuvers) > 3:
+                v4_vec = traj3[3:, -1] + dv3_vec
+                state4 = np.hstack((traj3[:3, -1], v4_vec))
+                if len(maneuvers) == 5:
+                    tof34 = period_from_inertial(state4, gm, max_time_sec=tf)
+                traj4 = tbp.prop(list(state4 / state_scales), [0., tof34 / tu], [], 6, 2, 0, tol, tol, tof34 / n_steps / tu, step_type, 3)
+                traj4 = (np.array(traj4)[:, 1:] * state_scales).T
+                trajs.append(traj4)
+                if len(maneuvers) > 5:
+                    v5_vec = traj4[3:, -1] + dv4_vec
+                    state5 = np.hstack((traj4[:3, -1], v5_vec))
+                    per5 = period_from_inertial(state5, gm)
+                    traj5 = tbp.prop(list(state5 / state_scales), [0., per5 / tu], [], 6, 2, 0, tol, tol, per5 / n_steps / tu, step_type, 3)
+                    traj5 = (np.array(traj5)[:, 1:] * state_scales).T
+                    trajs.append(traj5)
+                    a, e, i, w, o, f = inertial_to_keplerian_3d(traj5[:, -1], gm)
+                    if abs(e) > e_tol or abs(a - rp_target) > a_tol:
+                        failed = True
+                else:
+                    a, e, i, w, o, f = inertial_to_keplerian_3d(traj4[:, -1], gm)
+                    if abs(e) > e_tol or abs(a - rp_target) > a_tol:
+                        failed = True
+            else:
+                a, e, i, w, o, f = inertial_to_keplerian_3d(traj3[:, -1], gm)
+                if abs(e) > e_tol or abs(a - rp_target) > a_tol:
+                    failed = True
+
+            return trajs, tof0 == tf, failed, [a, e]
+
+        def plot_capture_sequence(trajs, has_traj11):
+            traj1, traj11, traj2, traj3 = trajs[:4]
+            traj4 = trajs[4] if len(trajs) > 4 else np.array([])
+            traj5 = trajs[5] if len(trajs) > 5 else np.array([])
+
+            import matplotlib.pyplot as plt
+            fig, ax = plt.subplots()
+            circ = plt.Circle((0, 0), c.r_mars_km, color='red')
+            ax.add_artist(circ)
+            plt.plot(traj1[0], traj1[1])
+            if has_traj11:
+                plt.gca().set_prop_cycle(None)
+                plt.plot(traj11[0], traj11[1], '--')
+            plt.scatter(traj1[0, 0], traj1[1, 0])
+            plt.plot(traj2[0], traj2[1])
+            plt.scatter(traj2[0, -1], traj2[1, -1])
+            plt.plot(traj3[0], traj3[1])
+            if len(trajs) > 4:
+                plt.scatter(traj3[0, -1], traj3[1, -1])
+                plt.plot(0, 0)
+                plt.plot(traj4[0], traj4[1])
+                if len(trajs) > 5:
+                    plt.scatter(traj4[0, -1], traj4[1, -1])
+                    plt.plot(0, 0)
+                    plt.plot(traj5[0], traj5[1])
+            ax.axis('equal')
+            # x, y = traj2.y[0, -1], traj2.y[1, -1]
+            # plt.quiver(x, y, dv2_vec[0], dv2_vec[1])
+            plt.show()
+
+        # x, y, vx, vy = 2e5, 2e5, -0.5, 0.3
+        # tests = np.array([x,  y, 0., vx,  vy, 0])  # ascending, prograde
+
+        tests = np.array([[2e4, 2e4, 0, -1, 1.2, 0],  # ascending + else, descending + need_to_raise_rp
+                          [5e4, 2e4, 0, -1, 1.2, 0],  # descending + need_to_lower_ra (hyperbolic)
+                          [2e5, 2e5, 0, 0.08, 0.1, 0],  # descending + need_to_raise_rp, ascending + above_ra_target
+                          [1e4, 1e5, 0, -0.3, 0.5, 0],  # descending + else, ascending + else
+                          [2e5, 2e5, 0, -0.5, 0.3, 0],  # descending + need_to_lower_rp, descending + need_to_lower_ra
+                          [5e4, 0, 0, -0.1, 1.2, 0]])
+
+        plot_failures = False
+        fails = []
+        for i in range(tests.shape[0]):
+            num_subtests = 16
+            subtests = np.array([tests[i].copy()] * num_subtests)
+            subtests[[1, 5, 6, 7, 11, 12, 13, 15], 0] *= -1
+            subtests[[2, 5, 8, 9, 11, 12, 14, 15], 1] *= -1
+            subtests[[3, 6, 8, 10, 11, 13, 14, 15], 3] *= -1
+            subtests[[4, 7, 9, 10, 12, 13, 14, 15], 4] *= -1
+            # subtests[1, 0] *= -1
+            # subtests[2, 1] *= -1
+            # subtests[3, 3] *= -1
+            # subtests[4, 4] *= -1
+            # subtests[5, [0, 1]] *= -1
+            # subtests[6, [0, 3]] *= -1
+            # subtests[7, [0, 4]] *= -1
+            # subtests[8, [1, 3]] *= -1
+            # subtests[9, [1, 4]] *= -1
+            # subtests[10, [3, 4]] *= -1
+            # subtests[11, [0, 1, 3]] *= -1
+            # subtests[12, [0, 1, 4]] *= -1
+            # subtests[13, [0, 3, 4]] *= -1
+            # subtests[14, [1, 3, 4]] *= -1
+            # subtests[15, [0, 1, 3, 4]] *= -1
+            for j in range(num_subtests):
+                trajs, has_traj11, failed, [a, e] = compute_capture_sequence(subtests[j])
+                if failed:
+                    if plot_failures:
+                        plot_capture_sequence(trajs, has_traj11)
+                    fails.append(subtests[j])
+        print('Failed cases:')
+        if len(fails) == 0:
+            print('None!')
         else:
-            raise ValueError('Unknown or unprepared outputs from capture function.')
-        r_vec, v_vec = state_0[:3], state_0[3:]
-        if len(maneuvers) == 3:
-            dv1_vec, dv2_vec, tof12 = maneuvers
-            dv1_mag, dv2_mag = mag3(dv1_vec), mag3(dv2_vec)
-            dv3_vec, dv3_mag, tof23 = np.zeros(3), 0., 0.
-        else:
-            dv1_vec, dv2_vec, dv3_vec, tof12, tof23 = maneuvers
-            dv1_mag, dv2_mag, dv3_mag = mag3(dv1_vec), mag3(dv2_vec), mag3(dv3_vec)
-
-        print('DV1 mag (km/s):\t\t%f' % abs(dv1_mag))
-        print('DV2 mag (km/s):\t\t%f' % abs(dv2_mag))
-        if len(maneuvers) == 3:
-            print('Total DV mag (km/s):\t%f' % (abs(dv1_mag) + abs(dv2_mag)))
-        else:
-            print('DV3 mag (km/s):\t\t%f' % abs(dv3_mag))
-            print('Total DV mag (km/s):\t%f' % (abs(dv1_mag) + abs(dv2_mag) + abs(dv3_mag)))
-
-        print('\nTime to second maneuver (hr):\t%f' % (tof12 / 3600))
-        if len(maneuvers) > 3:
-            print('Time to third maneuver (hr):\t%f' % (tof23 / 3600))
-
-        tf = 15000.
-        tol = 1e-10
-        step_size = tf / 50
-        du = 20000
-        tu = (du ** 3 / c.u_mars_km3s2) ** 0.5
-        state_scales = np.array([du, du, du, du / tu, du / tu, du / tu])
-        # traj1 = integrate.solve_ivp(eom2BP, [0, -tf * 1], state_0, atol=tol, rtol=tol)
-        # traj11 = integrate.solve_ivp(eom2BP, [0, tf * 1], state_0, atol=tol, rtol=tol)
-        traj1 = tbp.prop(list(state_0 / state_scales), [0., -tf / tu], [], 6, 2, 0, tol, tol, step_size / tu, 1, 3)
-        traj1 = (np.array(traj1)[:, 1:] * state_scales).T
-        traj11 = tbp.prop(list(state_0 / state_scales), [0., tf / tu], [], 6, 2, 0, tol, tol, step_size / tu, 1, 3)
-        traj11 = (np.array(traj11)[:, 1:] * state_scales).T
-
-        v_transfer_vec = state_0[3:6] + dv1_vec
-        state_transfer = np.hstack((r_vec, v_transfer_vec))
-        traj2 = tbp.prop(list(state_transfer / state_scales), [0., tof12 / tu], [], 6, 2, 0, tol, tol, tof12 / 50 / tu,
-                         1, 3)
-        traj2 = (np.array(traj2)[:, 1:] * state_scales).T
-        print('vp_hyper actual = %f' % (mag3(traj2[3:, -1])))
-        print('rp_hyper actual = %f' % (mag3(traj2[:3, -1])))
-
-        vp_hat = traj2[3:, -1] / mag3(traj2[3:, -1])
-        dv2_necessary = - mag3(dv2_vec) * vp_hat
-        print('dv2_vec actual =')
-        print(dv2_vec)
-        print('dv2_vec necessary =')
-        print(dv2_necessary)
-        v3_vec = traj2[3:, -1] + dv2_vec
-        ra_target = ra_from_rp_per(rp_target, per_target, gm)
-        state3 = np.hstack((traj2[:3, -1], v3_vec))
-        if len(maneuvers) == 3:
-            tof23 = period_from_inertial(state3, gm, max_time_sec=tf)
-        # traj3 = integrate.solve_ivp(eom2BP, [0, tof23], state3, atol=tol, rtol=tol)
-        traj3 = tbp.prop(list(state3 / state_scales), [0., tof23 / tu], [], 6, 2, 0, tol, tol, tof23 / 50 / tu, 1, 3)
-        traj3 = (np.array(traj3)[:, 1:] * state_scales).T
-        if len(maneuvers) > 3:
-            v4_vec = traj3[3:, -1] + dv3_vec
-            state4 = np.hstack((traj3[:3, -1], v4_vec))
-            per4 = period_from_inertial(state4, gm)
-            # traj4 = integrate.solve_ivp(eom2BP, [0, tf], state4, atol=tol, rtol=tol)
-            traj4 = tbp.prop(list(state4 / state_scales), [0., per4 / tu], [], 6, 2, 0, tol, tol, per4 / 50 / tu, 1, 3)
-            traj4 = (np.array(traj4)[:, 1:] * state_scales).T
-        else:
-            traj4 = []
-
-        import matplotlib.pyplot as plt
-        fig, ax = plt.subplots()
-        circ = plt.Circle((0, 0), r_mars_km, color='red')
-        ax.add_artist(circ)
-        plt.plot(traj1[0], traj1[1])
-        plt.gca().set_prop_cycle(None)
-        plt.plot(traj11[0], traj11[1], '--')
-        plt.scatter(traj1[0, 0], traj1[1, 0])
-        plt.plot(traj2[0], traj2[1])
-        plt.scatter(traj2[0, -1], traj2[1, -1])
-        plt.plot(traj3[0], traj3[1])
-        if len(maneuvers) > 3:
-            plt.scatter(traj3[0, -1], traj3[1, -1])
-            plt.plot(0, 0)
-            plt.plot(traj4[0], traj4[1])
-        ax.axis('equal')
-        # x, y = traj2.y[0, -1], traj2.y[1, -1]
-        # plt.quiver(x, y, dv2_vec[0], dv2_vec[1])
-        plt.show()
+            [print(f) for f in fails]
 
     test8 = False  # Test capture()
     if test8:
+        # Define problem
         state_rel = np.array([1000000, -1400000, 0., -1, -5, 0])
         rp_target = c.r_mars_km + 500
         per_target = 10 * 86400
         gm = c.u_mars_km3s2
         r_soi = c.r_soi_mars
-        capture_low_not_high = True
-        capture_current_not_optimal = False
-        maneuvers = capture(state_rel, rp_target, per_target, gm, r_soi, capture_low_not_high,
-                            capture_current_not_optimal)
-        [print(m) for m in maneuvers]
+        capture_low_not_high = False
+        capture_current_not_opt = False
+        # Compute capture
+        maneuvers = capture(state_rel, rp_target, per_target, gm, r_soi, capture_low_not_high, capture_current_not_opt)
+        y, full_traj = propagate_capture(maneuvers, state_rel, m0=10000)
+        # Plot
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        plt.plot(full_traj[0], full_traj[1])
+        ax.axis('equal')
+        plt.show()
 
     test9 = False  # Test perpendicular line visualization
     if test9:
@@ -2071,8 +3048,8 @@ if __name__ == "__main__":
             den = mag2(b.y - a.y, b.x - a.x)
             return num / den
 
-        test1 = True
-        if test1:
+        test9_1 = True
+        if test9_1:
             a = Point(1, 0)
             b = Point(2, 2)
             n = b - a
@@ -2095,8 +3072,8 @@ if __name__ == "__main__":
             plt.axis('equal')
             plt.show()
 
-        test2 = True
-        if test2:
+        test9_2 = True
+        if test9_2:
             plt.figure()
             a = Point(0, 0)
             p = Point(0, 1)
@@ -2127,3 +3104,156 @@ if __name__ == "__main__":
             plt.xlabel('Angle between old and new vectors (deg)')
             plt.ylabel('Normalized Delta V')
             plt.show()
+
+    test10 = False  # Test find_min()
+    if test10:
+        f = lambda x: 0.4 * x ** 3 + 5 * x ** 2 - 7.2 * x + 0.4278
+        tests = np.arange(20) + 1
+        for i in range(len(tests)):
+            x, y = find_min(f, -10, 20, num_iter=tests[i])
+            print('Iterations: %i' % tests[i])
+            print(x)
+            print(y)
+            print()
+
+    test11 = False  # Test lambert_min_dv()
+    if test11:
+        r0_vec = np.array([-1, 0.5, 0])
+        r0_vec = r0_vec / mag3(r0_vec) * c.a_mars_km * 0.95
+        v0_vec = np.array([-0.5, -1, 0])
+        v0_vec = v0_vec / mag3(v0_vec) * (c.u_sun_km3s2 / mag3(r0_vec)) ** 0.5
+        state_0 = np.hstack((r0_vec, v0_vec))
+        # low, high = 20, 400
+        # max_count = 10
+        # short = False
+        t0 = tc.times_jd1950_jc[-1] / c.day_to_jc * c.day_to_sec
+
+        # Initialize first time
+        lambert_min_dv(tc.gm, state_0, t0, tc.capture_time_low, tc.capture_time_high, short=tc.capture_short)
+
+        import time
+        timer_start = time.time()
+        dv1_vec, dv2_vec, tof12 = lambert_min_dv(tc.gm, state_0, t0, tc.capture_time_low, tc.capture_time_high,
+                                                 short=tc.capture_short)
+        timer_end = time.time()
+
+        print(dv1_vec)
+        print(dv2_vec)
+        print('Total Delta V = %f km/s' % (mag3(dv1_vec) + mag3(dv2_vec)))
+        print('Time-of-flight = %f days' % tof12)
+        print()
+        print('Elapsed time = %0.5e sec' % (timer_end - timer_start))
+
+        # Propagate transfer
+        gm = c.u_sun_km3s2
+        r_vec, v_vec = state_0[:3], state_0[3:]
+        tf = 50000.
+        tol = 1e-10
+        e_tol = 1e-4
+        a_tol = 1e-1
+        n_steps = 201
+        du = c.a_mars_km
+        tu = (du ** 3 / gm) ** 0.5
+        state_scales = np.array([du, du, du, du / tu, du / tu, du / tu])
+        step_type = 0
+        failed = False
+
+        tof0 = period_from_inertial(state_0, gm, max_time_sec=tf)
+        traj1 = tbp.prop(list(state_0 / state_scales), [0., -tof0 / tu], [], 6, 2, 0, tol, tol, tf / n_steps / tu,
+                         step_type, 3)
+        traj1 = (np.array(traj1)[:, 1:] * state_scales).T
+        traj11 = []
+        # if tof0 == tf:
+        # traj11 = tbp.prop(list(state_0 / state_scales), [0., tof0 / tu], [], 6, 2, 0, tol, tol, tf / n_steps / tu,
+        #                   step_type, 3)
+        # traj11 = (np.array(traj11)[:, 1:] * state_scales).T
+
+        v_transfer_vec = state_0[3:6] + dv1_vec
+        state_transfer = np.hstack((r_vec, v_transfer_vec))
+        traj2 = tbp.prop(list(state_transfer / state_scales), [0., tof12 * c.day_to_sec / tu], [], 6, 2, 0, tol, tol,
+                         tof12 * c.day_to_sec / n_steps / tu, step_type, 3)
+        traj2 = (np.array(traj2)[:, 1:] * state_scales).T
+
+        v3_vec = traj2[3:, -1] + dv2_vec
+        state3 = np.hstack((traj2[:3, -1], v3_vec))
+        tof23 = period_from_inertial(state3, gm, max_time_sec=tf)
+        traj3 = tbp.prop(list(state3 / state_scales), [0., tof23 / tu], [], 6, 2, 0, tol, tol, tof23 / n_steps / tu,
+                         step_type, 3)
+        traj3 = (np.array(traj3)[:, 1:] * state_scales).T
+
+        time = (tof12 + t0 * c.sec_to_day) * c.day_to_jc
+        state_f = c.ephem(['a', 'e', 'i', 'w', 'O', 'M'], ['mars'], np.array([time]))
+        state_f = keplerian_to_inertial_3d(state_f, gm, 'mean')
+        state_f[[2, 5]] = 0.
+        tof34 = period_from_inertial(state_f, gm, max_time_sec=tf)
+        traj4 = tbp.prop(list(state_f / state_scales), [0., tof34 / tu], [], 6, 2, 0, tol, tol, tof34 / n_steps / tu,
+                         step_type, 3)
+        traj4 = (np.array(traj4)[:, 1:] * state_scales).T
+
+        # Get state of Mars at initial point of transfer
+        state_0 = c.ephem(['a', 'e', 'i', 'w', 'O', 'M'], ['mars'], np.array([t0 * c.sec_to_day * c.day_to_jc]))
+        state_0 = keplerian_to_inertial_3d(state_0, gm, 'mean')
+        state_0[[2, 5]] = 0.
+
+        # Plot transfer
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        # circ = plt.Circle((0, 0), c.r_mars_km, color='red')
+        # ax.add_artist(circ)
+        plt.plot(traj1[0], traj1[1], label='S/C init orbit')
+        plt.scatter(state_0[0], state_0[1], s=40, facecolors='none', edgecolors='r', zorder=9, label='Mars init')
+        # plt.gca().set_prop_cycle(None)
+        # plt.plot(traj11[0], traj11[1], '--')
+        plt.scatter(traj1[0, 0], traj1[1, 0], zorder=9, label='S/C at t=0')
+        plt.plot(traj2[0], traj2[1], label='Transfer')
+        plt.scatter(traj2[0, -1], traj2[1, -1], s=40, facecolors='r', edgecolors='r', zorder=9, label='Mars final')
+        plt.plot(traj3[0], traj3[1])
+        plt.plot(traj4[0], traj4[1], label='Mars orbit')
+        ax.axis('equal')
+        x, y = traj1[0, -1], traj1[1, -1]
+        plt.quiver(x, y, dv1_vec[0], dv1_vec[1], zorder=8)
+        x, y = traj2[0, -1], traj2[1, -1]
+        plt.quiver(x, y, dv2_vec[0], dv2_vec[1], zorder=8)
+        plt.legend()
+        plt.title('Transfer = %.1f days' % tof12)
+        plt.show()
+
+    test12 = True  # Plot a sample trajectory to test tolerances
+    if test12:
+        state_0 = np.array([100000, 0, 0, 0, 2, 0], float)
+        gm = c.u_earth_km3s2
+        tf = 50000.
+        n_steps = 1000
+        rtol_test = 1e-8
+        atol_test = 1e-8
+        rtol_truth = atol_truth = 1e-16
+        du = mag3(state_0[:3])
+        tu = (du ** 3 / gm) ** 0.5
+        state_scales = np.array([du, du, du, du / tu, du / tu, du / tu])
+        step_type = 1
+        n_revolutions = 100
+
+        tof0 = period_from_inertial(state_0, gm, max_time_sec=tf) * n_revolutions
+        traj_test = tbp.prop(list(state_0 / state_scales), [0., tof0 / tu], [], 6, 2, 0, rtol_test, atol_test, 1., step_type, 3)
+        traj_test = (np.array(traj_test)[:, 1:] * state_scales).T
+
+        traj_truth = tbp.prop(list(state_0 / state_scales), [0., tof0 / tu], [], 6, 2, 0, rtol_truth, atol_truth, 1., step_type, 3)
+        traj_truth = (np.array(traj_truth)[:, 1:] * state_scales).T
+
+        pos_err = mag3(traj_test[:3, -1] - traj_truth[:3, -1])
+        vel_err = mag3(traj_test[3:, -1] - traj_truth[3:, -1])
+        print('Position error at end = %.3e km' % pos_err)
+        print('Velocity error at end = %.3e km/s' % vel_err)
+
+        # Plot transfer
+        import matplotlib.pyplot as plt
+        fig12, ax = plt.subplots()
+        circ = plt.Circle((0, 0), c.r_earth_km, color='blue')
+        ax.add_artist(circ)
+        plt.plot(traj_test[0], traj_test[1], label='Test')
+        plt.plot(traj_truth[0], traj_truth[1], label='Truth')
+        plt.scatter(traj_truth[0, 0], traj_truth[1, 0], zorder=9, label='S/C at t=0')
+        ax.axis('equal')
+        plt.legend()
+        plt.title('Transfer = %.1f days' % (tof0 / 86400))
+        plt.show()

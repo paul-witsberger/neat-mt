@@ -4,9 +4,10 @@ import numpy as np
 import constants as c
 from datetime import datetime
 
-max_generations = 1000
+max_generations = 500
 
 gm = c.u_sun_km3s2
+gm_target = c.u_mars_km3s2
 n_dim = 3
 assert n_dim == 2 or n_dim == 3
 # Create logical list for indices of 2D components
@@ -14,7 +15,7 @@ if n_dim == 2:
     ind_dim = np.array([True, True, False, True, True, False, False])
 else:
     # ind_dim = np.array([True, True, False, True, True, False, False])
-    ind_dim = np.array([True] * 6 + [False])
+    ind_dim = np.array([True] * 6 + [False], dtype=np.bool)
 
 # Define initial and final orbits
 # Initial orbit parameters
@@ -44,7 +45,7 @@ elliptical_final = True if ef_max > 0 else False
 m_dry = 10000
 m_prop = 3000
 m0 = m_dry + m_prop
-fixed_step = True
+fixed_step = False  # NOTE: on big runs, definitely used adaptive step
 variable_power = False
 if variable_power:
     power_min, power_max = 3.4, 12.5  # kW
@@ -58,6 +59,13 @@ else:
     T_max_kN = 1.2 * 1e-3  # 2 x HERMeS engines with 37.5 kW  # 21.8 mg/s for one thruster
     Isp = 2780
 isp_chemical = 370  # for the final correction burns
+
+# Specify the indices of the input array that should be used
+# input_indices = np.array([0, 1, 2, 3, 8, 9])  # ignore target, 2D [6 nodes]
+# input_indices = np.array([0, 1, 3, 4, 6, 7, 9, 10, 12, 13])  # inertial inputs, ignore Z components, 3D [10 nodes]
+input_indices = np.array([0, 1, 3, 5, 6, 7, 9, 11, 12, 13])  # keplerian inputs, ignore inclination and lan [10 nodes]
+# input_indices = None  # all
+n_outputs = 2
 
 # Define scales for the state vectors to non-dimensionalize later
 input_frame = 'kep'  # 'kep', 'mee', 'car'
@@ -80,8 +88,8 @@ elif input_frame == 'car':
 else:
     raise ValueError('Undefined input frame')
 scales_in = np.hstack((scales_in, scales_in, 1., 1.))  # add twice for current plus target, then add 1 for mass, time
-if n_dim == 2:
-    scales_out = np.array([[-np.pi / 6, np.pi / 6], [0, 1]])  # thrust angle, thrust throttle
+if n_outputs == 2:
+    scales_out = np.array([[-np.pi / 3, np.pi / 3], [0, 1]])  # thrust angle, thrust throttle
 else:
     scales_out = np.array([[-np.pi, np.pi], [-np.pi, np.pi], [0, 1]])  # alpha, beta, throttle
 
@@ -98,9 +106,9 @@ n_hid = 4
 n_out = 2
 
 # Define integration parameters
-rtol = 1e-7       # relative tolerance
-atol = 1e-7       # absolute tolerance
-num_nodes = 200   # number of thrust updates
+rtol = 1e-8       # relative tolerance
+atol = 1e-8       # absolute tolerance
+num_nodes = 50   # number of thrust updates
 n_steps = 20      # substeps between two nodes
 
 # Choose to add a penalty for going too close to the central body in the fitness function
@@ -127,27 +135,33 @@ missed_thrust_rd_factor = 1.  # make greater than one for events to be more seve
 num_cases = 1
 num_outages = 0
 
-# Specify the indices of the input array that should be used
-# input_indices = np.array([0, 1, 2, 3, 8, 9])  # ignore target, 2D [6 nodes]
-input_indices = np.array([0, 1, 3, 4, 6, 7, 9, 10, 12, 13])  # ignore Z components, 3D [10 nodes]
-# input_indices = None  # all
-outputs = 2
-
 # Specify if a Lambert arc should be computed to match the final state
 do_terminal_lambert_arc = False
 n_terminal_steps = 50
 position_tol = 0.1  # outer non-dimensional position
 capture_periapsis_alt_km = 100
+capture_periapsis_radius_km = c.r_mars_km + capture_periapsis_alt_km
 capture_period_day = 10
 capture_low_not_high = False  # If true, capture into low circular orbit; if false, capture into high elliptic orbit
 capture_current_not_optimal = True  # If true, capture at current location; if false, capture at optimal point on orbit
+max_final_time = 20 * c.day_to_sec
+r_limit_soi = 20  # Limit in SOI radii of how far away a capture maneuver can occur
+vallado_rtol = 1e-8  # Tolerance for vallado() convergence
+vallado_numiter = 30  # Number of iterations allowed in vallado()
+capture_short = True
+if capture_short:
+    capture_time_low = 10  # minimum time of Lambert arc, days
+    capture_time_high = 60  # maximum time of Lambert arc, days
+else:
+    capture_time_low = 300  # minimum time of Lambert arc, days
+    capture_time_high = 1000  # maximum time of Lambert arc, days
 
 # Define initial and final bodies and times
 init_body = 'earth'
 target_body = 'mars'
 central_body = 'sun'
-t0_str = '2025 Jan 01 00:00:00'
-tf_str = '2027 Apr 01 00:00:00'
+t0_str = '2019 Sep 27 00:00:00'
+tf_str = '2022 Jun 23 00:00:00'
 fmt = '%Y %b %d %H:%M:%S'
 ordinal_to_julian = 1721424.5
 t0 = datetime.strptime(t0_str, fmt).toordinal() + ordinal_to_julian

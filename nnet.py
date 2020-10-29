@@ -1,5 +1,19 @@
 from orbit_util import *
-from traj_config import n_dim, outputs, input_frame, input_indices, scales_in, scales_out, gm, out_node_scales, angle_choices, use_multiple_angle_nodes
+from traj_config import n_dim, n_outputs, input_frame, input_indices, scales_in, scales_out, gm, out_node_scales, angle_choices, use_multiple_angle_nodes
+from numba import njit
+
+
+@njit
+def scale_inputs(inputs: np.ndarray, scales_in: np.ndarray = scales_in) -> np.ndarray:
+    return inputs / scales_in
+
+
+@njit
+def scale_outputs(outputs: np.ndarray, old_scales: np.ndarray = out_node_scales, new_scales: np.ndarray = scales_out, nd: int = n_outputs):
+    so = old_scales
+    sn = new_scales
+    outputs_scaled = (outputs[0] - so[:nd, 0]) * (sn[:nd, 1] - sn[:nd, 0]) / (so[:nd, 1] - so[:nd, 0]) + sn[:nd, 0]
+    return outputs_scaled
 
 
 class Neurocontroller():
@@ -81,43 +95,58 @@ class Neurocontroller():
         return angle_choices[angle_choice]
 
     def get_thrust_vec_neat(self, state: np.ndarray) -> np.ndarray:
-        _state = state.copy()
+        _state = np.empty_like(state)
         # Convert the state to the desired frame with the appropriate number of dimensions (starts in inertial frame)
         if n_dim == 2:
-            if input_frame == 'kep':  # 2D Keplerian
-                curr = inertial_to_keplerian_2d(_state[:n_dim * 2], gm=gm)
-                targ = inertial_to_keplerian_2d(_state[n_dim * 2:n_dim * 4], gm=gm)
-                _state = np.hstack((curr, targ, _state[-2:]))
+            # if input_frame == 'kep':  # 2D Keplerian
+                curr = inertial_to_keplerian_2d(state[:n_dim * 2], gm=gm)
+                targ = inertial_to_keplerian_2d(state[n_dim * 2:n_dim * 4], gm=gm)
         else:
+            assert input_frame == 'kep' or input_frame == 'mee'
             if input_frame == 'kep':  # 3D Keplerian
                 # TODO is there a way to avoid converting inertial to keplerian each step?
-                curr = inertial_to_keplerian_3d(_state[:n_dim * 2], gm=gm)
-                targ = inertial_to_keplerian_3d(_state[n_dim * 2:n_dim * 4], gm=gm)
-                _state = np.hstack((curr, targ, _state[-2:]))
-            elif input_frame == 'mee':  # 3D MEE
-                curr = inertial_to_keplerian_3d(keplerian_to_mee_3d(_state[:n_dim * 2]), gm=gm)
-                targ = inertial_to_keplerian_3d(keplerian_to_mee_3d(_state[n_dim * 2:n_dim * 4]), gm=gm)
-                _state = np.hstack((curr, targ, _state[-2:]))
+                curr = inertial_to_keplerian_3d(state[:n_dim * 2], gm=gm)
+                targ = inertial_to_keplerian_3d(state[n_dim * 2:n_dim * 4], gm=gm)
+            else:  # 3D MEE  # TODO this is wrong - ine2kep first, then kep2mee
+                curr = inertial_to_keplerian_3d(keplerian_to_mee_3d(state[:n_dim * 2]), gm=gm)
+                targ = inertial_to_keplerian_3d(keplerian_to_mee_3d(state[n_dim * 2:n_dim * 4]), gm=gm)
+        _state[:n_dim * 2] = curr
+        _state[n_dim * 2:n_dim * 4] = targ
+        _state[-2:] = state[-2:]
+
         # Scale inputs before passing them to the network
-        state_scaled = self.scaleInputs(_state)
+        # state_scaled = self.scaleInputs(_state)
+        state_scaled = scale_inputs(_state)
+
         # Choose the desired state elements to pass to the network
         if input_indices is not None:
             state_scaled = state_scaled[input_indices]
+
         # Get network activations
         out = np.array(self.net.activate(state_scaled)).reshape((1, -1))
+
         # Convert outputs from angle and throttle to thrust vector
-        if outputs == 2:
+        if n_outputs == 2:
             if use_multiple_angle_nodes:  # categorical classification
                 angle_choice = np.argmax(out[0, :-1])
                 alpha = self.get_angle(angle_choice)
                 throttle = out[0, -1]
             else:  # regression
-                alpha, throttle = self.scaleOutputs(out)
-            thrust = np.hstack((np.cos(alpha), np.sin(alpha), 0)) * throttle
+                # alpha, throttle = self.scaleOutputs(out)
+                alpha, throttle = scale_outputs(out)
+            # thrust = np.hstack((np.cos(alpha), np.sin(alpha), 0)) * throttle
+            thrust = np.empty(3, np.float64)
+            # thrust[0] = np.cos(alpha) * throttle  # velocity
+            # thrust[1] = np.sin(alpha) * throttle  # anti-co-normal
+            # thrust[2] = 0.                        # normal
+            thrust[0] = -np.sin(alpha) * throttle  # co-normal
+            thrust[1] =  np.cos(alpha) * throttle  # velocity
+            thrust[2] =  0.                        # normal
         else:
             alpha, beta, throttle = self.scaleOutputs(out)
             thrust = np.hstack((np.cos(alpha) * np.cos(beta), np.sin(alpha) * np.cos(beta), np.sin(beta)))  # TODO use this info to properly apply thrust
             # See 532 Notes, Page JS_3Dex 2-3 for reference on VNC frame
+
         return thrust
 
     def forwardPass(self, state: np.ndarray) -> np.ndarray:

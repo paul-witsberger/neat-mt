@@ -5,11 +5,12 @@ from neatfast import visualize
 from missed_thrust import eval_traj_neat
 from builder import make_last_traj, make_neat_network_diagram
 from traj_config import max_generations
+import cProfile
+import time
 
 
 def run():
-    # Load the config file, which is assumed to live in
-    # the same directory as this script.
+    # Load the config file, which is assumed to live in the same directory as this script.
     local_dir = os.path.dirname(__file__)
     config_path = os.path.join(local_dir, 'config-feedforward')
     config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction, neat.DefaultSpeciesSet, neat.DefaultStagnation,
@@ -23,9 +24,11 @@ def run():
 
     # Run
     num_workers = os.cpu_count() - 1
-    # num_workers = 1  # for debugging purposes
     pe = neat.ParallelEvaluator(num_workers, eval_traj_neat)
     winner = pop.run(pe.evaluate, n=max_generations)
+
+    # se = neat.SerialEvaluator(eval_traj_neat)
+    # winner = pop.run(se.evaluate, n=max_generations)
 
     # Save the winner.
     with open('winner-feedforward', 'wb') as f:
@@ -41,4 +44,10 @@ def run():
 
 
 if __name__ == '__main__':
+    # NOTE add -OO to configuration when running for slight improvement
     run()
+
+    # t_start = time.time()
+    # cProfile.run('run()', 'neat_mt_timing_info')
+    # t_end = time.time()
+    # print('\nTotal runtime = %.1f sec' % (t_end - t_start))

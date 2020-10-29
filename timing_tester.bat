@@ -1,0 +1,1 @@
+python -m timeit -s "import numpy as np" "a = np.random.rand(20)" "b = np.square(a)"
