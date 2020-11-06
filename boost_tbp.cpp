@@ -36,9 +36,9 @@ Vec operator*(const Mat &a, const Vec &x) {
 	int n = x.size();
 	Vec prod(m);
 
-	for(i = 0; i < m; i++) {
+	for (i = 0; i < m; i++) {
 		prod[i] = 0.;
-		for(j = 0; j < n; j++) {
+		for (j = 0; j < n; j++) {
 			prod[i] += a[i][j] * x[j];
 		}
 	}
@@ -53,9 +53,9 @@ Mat operator*(const Mat &a, const Mat &b) {
 	Mat prod(n_rows, vector<double>(b.at(0).size()));
 
 	// Loop through and add each component
-	for(row = 0; row < n_rows; ++row) {
-		for(col = 0; col < n_cols; ++col) {
-			for(size_t inner = 0; inner < b.size(); ++inner) {
+	for (row = 0; row < n_rows; ++row) {
+		for (col = 0; col < n_cols; ++col) {
+			for (size_t inner = 0; inner < b.size(); ++inner) {
 				prod.at(row).at(col) += a.at(row).at(inner) * b.at(inner).at(col);
 			}
 		}
@@ -68,7 +68,7 @@ Vec operator/(const Vec &a, const double b) {
 	int i;
 	int n_rows = a.size();
 	Vec out;
-	for(i = 0; i < n_rows; ++i) {
+	for (i = 0; i < n_rows; ++i) {
 		out.push_back(a[i] / b);
 	}
 	return out;
@@ -78,8 +78,8 @@ Vec operator/(const Vec &a, const double b) {
 void print(Vec &vec) {
 	int i;
 	int n_rows = vec.size();
-	for(i = 0; i < n_rows; ++i) {
-		cout << vec[i] << " \n"[i==(n_rows-1)];
+	for (i = 0; i < n_rows; ++i) {
+		cout << vec[i] << " \n"[i == (n_rows - 1)];
 	}
 }
 
@@ -88,9 +88,9 @@ void print(Mat &mat) {
 	int i, j;
 	int n_rows = mat.size();
 	int n_cols = mat[0].size();
-	for(i = 0; i < n_rows; ++i) {
-		for(j = 0; j < n_cols; ++j) {
-			cout << mat[i][j] << " \n"[j==(n_cols-1)];
+	for (i = 0; i < n_rows; ++i) {
+		for (j = 0; j < n_cols; ++j) {
+			cout << mat[i][j] << " \n"[j == (n_cols - 1)];
 		}
 	}
 }
@@ -107,7 +107,7 @@ Vec cross(const Vec &left, const Vec &right) {
 	x = ((left[1] * right[2]) - (left[2] * right[1]));
 	y = ((left[2] * right[0]) - (left[0] * right[2]));
 	z = ((left[0] * right[1]) - (left[1] * right[0]));
-	product = {x, y, z};
+	product = { x, y, z };
 	return product;
 }
 
@@ -115,8 +115,8 @@ Vec cross(const Vec &left, const Vec &right) {
 Mat transpose(const Mat &mat) {
 	Mat trans(mat);
 	int i, j;
-	for(i = 0; i < mat.size(); ++i) {
-		for(j = 0; j < mat.at(i).size(); ++j) {
+	for (i = 0; i < mat.size(); ++i) {
+		for (j = 0; j < mat.at(i).size(); ++j) {
 			trans[j][i] = mat[i][j];
 		}
 	}
@@ -137,9 +137,9 @@ Vec rotateVNCtoInertial3D(const Vec &vec, const Vec &state) {
 	n_hat = h_vec / mag3(h_vec);
 	c_hat = cross(v_hat, n_hat);
 	// Construct DCM
+	dcm.push_back(c_hat);
 	dcm.push_back(v_hat);
 	dcm.push_back(n_hat);
-	dcm.push_back(c_hat);
 	dcm_t = transpose(dcm);
 	// Apply rotation
 	product = dcm_t * vec;

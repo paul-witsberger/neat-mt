@@ -10,11 +10,12 @@ import pickle
 from numba import njit
 from traj_config import gm, ind_dim
 from constants import au_to_km
-import time
 
 
 # Create 2-body integrator object
 tbp = boost_tbp.TBP()
+year_to_sec = c.year_to_sec
+day_to_sec = c.day_to_sec
 
 
 def eval_traj_neat(genome: neat.genome.DefaultGenome, config: neat.config.Config) -> float:
@@ -30,19 +31,23 @@ def eval_traj_neat(genome: neat.genome.DefaultGenome, config: neat.config.Config
     nc = Neurocontroller.init_from_neat_net(net, tc.scales_in, tc.scales_out)
     thrust_fcn = nc.get_thrust_vec_neat
 
+    if config.do_terminal_lambert_arc is None:
+        _do_capture = tc.do_terminal_lambert_arc
+    else:
+        _do_capture = config.do_terminal_lambert_arc
     # Define times
-    ti = np.empty(tc.num_nodes + 1)
+    ti = np.empty(config.num_nodes + 1)
     # ti = np.power(np.linspace(0, 1, num_nodes), 3 / 2) * (tf - t0) + t0
-    ti[:-1] = np.linspace(tc.t0, tc.tf, tc.num_nodes)
+    ti[:-1] = np.linspace(tc.t0, tc.tf, config.num_nodes)
     ti[-1] = ti[-2]
     ti /= tc.tu
 
     # Initialize score vector
-    f = np.empty(tc.num_cases)
+    f = np.empty(config.num_cases)
     f[:] = np.infty
 
     # Main loop - evaluate network on "num_cases" number of random cases
-    for i in range(tc.num_cases):
+    for i in range(config.num_cases):
         # Create a new case based on the given boundary condition boundary conditions
         _y0, yf = compute_bcs()  # formerly make_new_bcs()
 
@@ -51,7 +56,7 @@ def eval_traj_neat(genome: neat.genome.DefaultGenome, config: neat.config.Config
         y0[:-1], y0[-1] = _y0, tc.m0
 
         # Integrate trajectory
-        y, miss_ind, full_traj, maneuvers = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf)
+        y, miss_ind, full_traj, maneuvers = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, config)
         # dv1, dv2 = maneuvers[:2]
         # mf, tf, yf_actual = maneuvers
 
@@ -76,7 +81,7 @@ def eval_traj_neat(genome: neat.genome.DefaultGenome, config: neat.config.Config
     rdo = False
     rbdo = False
     normal = True
-    if tc.num_cases > 1:
+    if config.num_cases > 1:
         if rdo:
             # Robust Design Optimization
             alpha = 0.9  # weight to favor mean vs std
@@ -89,7 +94,7 @@ def eval_traj_neat(genome: neat.genome.DefaultGenome, config: neat.config.Config
             raise NotImplementedError('RBDO has not been implemented yet - need to determine how to compute cases that'
                                       ' are "outside bounds".')
             # f_mean = np.mean(f)
-            # f_constraint_violation = num_cases_outside_bounds / tc.num_cases
+            # f_constraint_violation = num_cases_outside_bounds / config.num_cases
             # c = 100.
             # f = f_mean + c * f_constraint_violation
 
@@ -155,7 +160,7 @@ def compute_bcs() -> (np.ndarray, np.ndarray):
     times = np.array([tc.times_jd1950_jc[0], tc.times_jd1950_jc[-1]])
     states_coe = c.ephem(elems, planets, times)
     states_coe[2, :, :] = 0.  # inclination
-    states_coe[4, :, :] = 0.  # longitude of ascending node
+    # states_coe[4, :, :] = 0.  # longitude of ascending node
     state_0_i = ou.keplerian_to_inertial_3d(states_coe[:, 0, 0], mean_or_true='mean')
     state_f_i = ou.keplerian_to_inertial_3d(states_coe[:, 1, 1], mean_or_true='mean')
     return state_0_i, state_f_i
@@ -304,7 +309,8 @@ def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float,
 # TODO go back and look into redoing how time vector is saved - could probably adjust it to account for updated
 #      maneuver calculations
 def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat, y0: np.ndarray, ti: np.ndarray,
-                                 yf: np.ndarray, save_full_traj: bool = False, fixed_step: bool = tc.fixed_step) -> \
+                                 yf: np.ndarray, config=neat.config.Config, save_full_traj: bool = False,
+                                 fixed_step: bool = tc.fixed_step) -> \
                                 (np.ndarray, np.ndarray, np.ndarray, list):
     """
     Integrate a trajectory using boost_2bp with each leg having fixed thrust. Updates the thrust vector between each
@@ -321,6 +327,7 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
     :param y0:
     :param ti:
     :param yf:
+    :param config:
     :param save_full_traj:
     :param fixed_step:
     :return:
@@ -337,8 +344,9 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
     y[0] = y0[:]
 
     # Define flag for missed thrust
-    if tc.missed_thrust_allowed:
-        miss_ind = calculate_missed_thrust_events(ti * tc.tu)
+    if config.missed_thrust_allowed:
+        miss_ind = calculate_missed_thrust_events(ti * tc.tu, config.missed_thrust_tbe_factor,
+                                                  config.missed_thrust_rd_factor)
     else:
         miss_ind = np.array([], dtype=np.int64)
 
@@ -349,7 +357,6 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
     else:
         integrator_type = 1  # adaptive step
     eom_type = 0  # 0 constant power, 1 variable power, 2 state transition matrix
-
 
     full_traj = np.empty((len(ti) * tc.n_steps, state_size + 1), dtype=np.float64)
     for i in range(len(ti) - 2):
@@ -362,7 +369,7 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
             return np.array(0), 0, 0, [np.empty(3), np.empty(3), 0]
 
         # Fixed step integrator step size
-        step_size = (ti[i+1] - ti[i]) / tc.n_steps
+        step_size = (ti[i+1] - ti[i]) / tc.n_steps - 1e-16  # take a small amount off so fixed steps land within bounds
 
         # Ratio of remaining propellant mass, and time ratio
         mass_ratio = (y[i, -1] - tc.m_dry) / (y[0, -1] - tc.m_dry)  # (curr - dry) / (init - dry) = curr_prp / init_prp
@@ -377,7 +384,7 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
             # nn_input = np.hstack((y[i, tc.ind_dim], yf[tc.ind_dim[:-1]], mass_ratio, time_ratio))
             nn_input = np.empty(tc.n_dim * 4 + 2, dtype=np.float64)
             nn_input[:tc.n_dim * 2] = y[i, tc.ind_dim]
-            nn_input[2 * tc.n_dim:4 * tc.n_dim] =  yf[tc.ind_dim[:-1]]
+            nn_input[2 * tc.n_dim:4 * tc.n_dim] = yf[tc.ind_dim[:-1]]
             nn_input[-2], nn_input[-1] = mass_ratio, time_ratio
             thrust = thrust_fcn(nn_input) * tc.T_max_kN / tc.fu
 
@@ -396,21 +403,24 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
         # traj = tbp.prop(list(y[i] / tc.state_scales), [ti[i], ti[i+1]], param, state_size, time_size, param_size,
         #                 tc.rtol, tc.atol, step_size, integrator_type, eom_type)
         asdf = (list(y[i] / tc.state_scales), [ti[i], ti[i + 1]], param, state_size, time_size, param_size,
-                          tc.rtol, tc.atol, step_size, integrator_type, eom_type)
+                tc.rtol, tc.atol, step_size, integrator_type, eom_type)
         traj = asdfasdf(*asdf)
 
         # Save full trajectory including intermediate states
         if save_full_traj:
-            # full_traj.extend(traj[1:])
-            full_traj[i * tc.n_steps:(i+1) * tc.n_steps] = traj[1:]
-
+            try:
+                full_traj[i * tc.n_steps:(i + 1) * tc.n_steps] = traj[1:]
+            except ValueError as execption:
+                full_traj[i * tc.n_steps:(i + 1) * tc.n_steps - 1] = traj[1:]
+                n_skipped
+                print('i = %i' % i)
         # Save final state of current leg
         y[i+1] = np.array(traj[-1])[1:] * tc.state_scales
         # t_act_f = time.process_time()
         # print('Time to propagate: %.2e sec' % (t_act_f - t_act_0))
 
     # Compute maneuvers required to capture into a target orbit
-    if tc.do_terminal_lambert_arc:
+    if config.do_terminal_lambert_arc:
         state_f = y[-2, :6]
         mf = y[-2, 6]
         state_rel = state_f - yf
@@ -488,18 +498,16 @@ def asdfasdf(*args):
     return tbp.prop(*args)
 
 
-year_to_sec = c.year_to_sec
-day_to_sec = c.day_to_sec
 @njit
-def calculate_missed_thrust_events(ti: np.ndarray) -> np.ndarray:
+def calculate_missed_thrust_events(ti: np.ndarray, tbe_factor=1.0, rd_factor=1.0) -> np.ndarray:
     """
     Return indices of random missed thrust events that occur according to the Weibull distributions given by Imken et al
     :param ti:
     :return:
     """
     # Define Weibull distribution parameters
-    k_tbe, lambda_tbe = 0.86737, 0.62394 * tc.missed_thrust_tbe_factor
-    k_rd, lambda_rd = 1.144, 2.459 * tc.missed_thrust_rd_factor
+    k_tbe, lambda_tbe = 0.86737, 0.62394 * tbe_factor
+    k_rd, lambda_rd = 1.144, 2.459 * rd_factor
     max_discovery_delay_days, op_recovery_days = 3, 0.5
     # initialize list of indices that experience missed thrust
     miss_indices = np.empty_like(ti, dtype=np.int64)
@@ -516,6 +524,7 @@ def calculate_missed_thrust_events(ti: np.ndarray) -> np.ndarray:
             start = find_nearest(ti, t)
             stop = max(start + 1, find_nearest(ti, t + recovery_duration))
             miss_indices[ctr:ctr + (stop - start)] = np.arange(start, stop)
+            ctr += stop - start
             t += recovery_duration
         if t >= tf:
             return miss_indices[:ctr]  # TODO make sure this works if no outages occur
@@ -554,7 +563,7 @@ def calculate_prop_margins(genome: neat.genome.DefaultGenome, config: neat.confi
 
     # Define times
     # ti = np.power(np.linspace(0, 1, num_nodes), 3 / 2) * (tf - t0) + t0
-    ti = np.linspace(tc.t0, tc.tf, tc.num_nodes)
+    ti = np.linspace(tc.t0, tc.tf, config.num_nodes)
     ti /= tc.tu
 
     # Create a new case based on the given boundary condition boundary conditions
@@ -621,10 +630,10 @@ def run_margins():
     :return:
     """
     local_dir = os.path.dirname(__file__)
-    config_path = os.path.join(local_dir, 'config-feedforward')
+    config_path = os.path.join(local_dir, 'config', 'config_default')
     config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction, neat.DefaultSpeciesSet, neat.DefaultStagnation,
                          config_path)
-    with open('winner-feedforward', 'rb') as f:
+    with open('results//winner', 'rb') as f:
         genome = pickle.load(f)
     margin = calculate_prop_margins(genome, config)
     print(margin)
@@ -635,7 +644,7 @@ if __name__ == '__main__':
     if test1:
         run_margins()
 
-    test2 = True
+    test2 = False
     if test2:
         bc0, bcf = compute_bcs()
         print(bc0)

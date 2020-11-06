@@ -1,5 +1,6 @@
 from orbit_util import *
-from traj_config import n_dim, n_outputs, input_frame, input_indices, scales_in, scales_out, gm, out_node_scales, angle_choices, use_multiple_angle_nodes
+from traj_config import n_dim, n_outputs, input_frame, input_indices, scales_in, scales_out, gm, out_node_scales,\
+    angle_choices, use_multiple_angle_nodes
 from numba import njit
 
 
@@ -9,14 +10,15 @@ def scale_inputs(inputs: np.ndarray, scales_in: np.ndarray = scales_in) -> np.nd
 
 
 @njit
-def scale_outputs(outputs: np.ndarray, old_scales: np.ndarray = out_node_scales, new_scales: np.ndarray = scales_out, nd: int = n_outputs):
+def scale_outputs(outputs: np.ndarray, old_scales: np.ndarray = out_node_scales, new_scales: np.ndarray = scales_out,
+                  nd: int = n_outputs):
     so = old_scales
     sn = new_scales
     outputs_scaled = (outputs[0] - so[:nd, 0]) * (sn[:nd, 1] - sn[:nd, 0]) / (so[:nd, 1] - so[:nd, 0]) + sn[:nd, 0]
     return outputs_scaled
 
 
-class Neurocontroller():
+class Neurocontroller:
 
     def __init__(self, scales_in, scales_out, n_in=13, n_hid=10, n_out=2, neat_net=None, init_from_neat_net=False):
         if init_from_neat_net:
@@ -68,11 +70,13 @@ class Neurocontroller():
     def activation(W: np.ndarray, b: np.ndarray, x: np.ndarray) -> np.ndarray:
         return np.tanh(np.sum((np.matmul(W, x), b), axis=0))
 
-    def scaleInputs(self, inputs: np.ndarray) -> np.ndarray:
+    @staticmethod
+    def scaleInputs(inputs: np.ndarray) -> np.ndarray:
         inputs_scaled = inputs / scales_in
         return inputs_scaled
 
-    def scaleOutputs(self, outputs: np.ndarray) -> np.ndarray:
+    @staticmethod
+    def scaleOutputs(outputs: np.ndarray) -> np.ndarray:
         so = out_node_scales  # old scales
         sn = scales_out       # new scales
         outputs_scaled = np.array([(out - so[i, 0]) / (so[i, 1] - so[i, 0]) * (sn[i, 1] - sn[i, 0]) + sn[i, 0]
@@ -99,8 +103,8 @@ class Neurocontroller():
         # Convert the state to the desired frame with the appropriate number of dimensions (starts in inertial frame)
         if n_dim == 2:
             # if input_frame == 'kep':  # 2D Keplerian
-                curr = inertial_to_keplerian_2d(state[:n_dim * 2], gm=gm)
-                targ = inertial_to_keplerian_2d(state[n_dim * 2:n_dim * 4], gm=gm)
+            curr = inertial_to_keplerian_2d(state[:n_dim * 2], gm=gm)
+            targ = inertial_to_keplerian_2d(state[n_dim * 2:n_dim * 4], gm=gm)
         else:
             assert input_frame == 'kep' or input_frame == 'mee'
             if input_frame == 'kep':  # 3D Keplerian
@@ -140,11 +144,12 @@ class Neurocontroller():
             # thrust[1] = np.sin(alpha) * throttle  # anti-co-normal
             # thrust[2] = 0.                        # normal
             thrust[0] = -np.sin(alpha) * throttle  # co-normal
-            thrust[1] =  np.cos(alpha) * throttle  # velocity
-            thrust[2] =  0.                        # normal
+            thrust[1] = np.cos(alpha) * throttle  # velocity
+            thrust[2] = 0.                        # normal
         else:
             alpha, beta, throttle = self.scaleOutputs(out)
-            thrust = np.hstack((np.cos(alpha) * np.cos(beta), np.sin(alpha) * np.cos(beta), np.sin(beta)))  # TODO use this info to properly apply thrust
+            # TODO use this info to properly apply thrust
+            thrust = np.hstack((np.cos(alpha) * np.cos(beta), np.sin(alpha) * np.cos(beta), np.sin(beta)))
             # See 532 Notes, Page JS_3Dex 2-3 for reference on VNC frame
 
         return thrust
@@ -162,10 +167,10 @@ class Neurocontroller():
     def setWeights(self, Wb_new: np.ndarray):
         W_new = [[] for _ in range(self.n_layers)]
         b_new = [[] for _ in range(self.n_layers)]
-        assert(self.n_layers == 2) # only supports 2 layers currently
+        assert(self.n_layers == 2)  # only supports 2 layers currently
         W_new[0] = np.reshape(Wb_new[:(self.n_in*self.n_hid)], (self.n_hid, self.n_in))
         b_new[0] = np.reshape(Wb_new[(self.n_in*self.n_hid):(self.n_in*self.n_hid+self.n_hid)], (self.n_hid, 1))
-        W_new[-1] = np.reshape(Wb_new[-(self.n_hid*self.n_out+self.n_out):-(self.n_out)], (self.n_out, self.n_hid))
+        W_new[-1] = np.reshape(Wb_new[-(self.n_hid*self.n_out+self.n_out):-self.n_out], (self.n_out, self.n_hid))
         b_new[-1] = np.reshape(Wb_new[-self.n_out:], (self.n_out, 1))
         for i, w in enumerate(self.W):
             self.W[i] = W_new[i]

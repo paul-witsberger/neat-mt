@@ -75,9 +75,9 @@ def plot_traj_3d(y: np.ndarray):
     plt.show()
 
 
-def plot_traj_2d(yout: np.ndarray, show_plot: bool = True, save_plot: bool = False, fname: str = 'tmp_traj_plot',
+def plot_traj_2d(yout: np.ndarray, show_plot: bool = True, save_plot: bool = False, fname: str = 'results//traj_plot_',
                  title: str = '', fig_ax=None, label: str = '', start: bool = False, end: bool = False,
-                 show_legend: bool = True, scale_distance: bool = True):
+                 show_legend: bool = True, scale_distance: bool = True, config_name='tmp'):
     """
     Plots various elements of the trajectory. Behavior changes based on the label.
     :param yout:
@@ -140,11 +140,12 @@ def plot_traj_2d(yout: np.ndarray, show_plot: bool = True, save_plot: bool = Fal
     if show_plot:
         plt.show()
     if save_plot:
-        fig.savefig(fname, dpi=600)
+        fig.savefig(fname=fname + config_name, dpi=600)
+        plt.close(fig)
     return fig, ax
 
 
-def plot_traj_2d_struct(yout, show_plot: bool = True, save_plot: bool = False, fname: str = 'tmp_traj_plot',
+def plot_traj_2d_struct(yout, show_plot: bool = True, save_plot: bool = False, fname: str = 'results//tmp_traj_plot',
                         title: str = '', fig_ax=None, label: str = '', end: bool = False, show_legend: bool = True,
                         scale_distance: bool = True):
     """
@@ -198,7 +199,7 @@ def plot_traj_2d_struct(yout, show_plot: bool = True, save_plot: bool = False, f
 
 
 def plot_mass_history(t: np.ndarray, m: np.ndarray, show_plot: bool = False, save_plot: bool = True,
-                      fname: str = 'tmp_mass_hist', mt_ind: np.ndarray = None):
+                      fname: str = 'results//mass_hist_', mt_ind: np.ndarray = None, config_name='tmp'):
     fig = plt.figure()
     ax = fig.add_subplot(111)
     plt.grid(True)
@@ -212,17 +213,19 @@ def plot_mass_history(t: np.ndarray, m: np.ndarray, show_plot: bool = False, sav
     if show_plot:
         plt.show()
     if save_plot:
-        fig.savefig(fname, dpi=300)
+        fig.savefig(fname + config_name, dpi=300)
+    plt.close(fig)
 
 
 def plot_thrust_history(t: np.ndarray, thrust_vec: np.ndarray, show_plot: bool = False, save_plot: bool = True,
-                        fname: str = 'tmp_thrust_hist', mt_ind: np.ndarray = None):
+                        fname: str = 'results//thrust_hist_', mt_ind: np.ndarray = None, config_name='tmp'):
     fig = plt.figure()
     ax1 = fig.add_subplot(211)
     ax2 = fig.add_subplot(212)
     thrust_mag = np.linalg.norm(thrust_vec, axis=1)
     throttle = thrust_mag / tc.T_max_kN
     angle = np.rad2deg(np.arctan2(thrust_vec[:, 1], thrust_vec[:, 0])) - 90
+    angle[throttle == 0.] = 0.
     ax1.step(t, throttle, where='post')
     ax1.set_title('Throttle')
     ax1.set_xlabel('Time (day)')
@@ -240,4 +243,5 @@ def plot_thrust_history(t: np.ndarray, thrust_vec: np.ndarray, show_plot: bool =
     if show_plot:
         plt.show()
     if save_plot:
-        fig.savefig(fname, dpi=300)
+        fig.savefig(fname + config_name, dpi=300)
+    plt.close(fig)

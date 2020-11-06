@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from traj_config import gm, n_dim
 
 
-def eom2BP(t: float, x: np.ndarray, u: float=gm) -> np.ndarray:
+def eom2BP(t: float, x: np.ndarray, u: float = gm) -> np.ndarray:
     x_dot = np.zeros(x.shape)
     r = np.sqrt(np.sum(np.square(x[0:n_dim])))
     x_dot[0:n_dim] = x[n_dim:]
@@ -12,7 +12,8 @@ def eom2BP(t: float, x: np.ndarray, u: float=gm) -> np.ndarray:
     return x_dot
 
 
-def eom2BPThrust(t: float, y: np.ndarray, yf: np.ndarray, m_dry: float, u: float=gm, thrust_fcn=None, Isp_s: float=2000, T_max_kN: float=0.001) -> np.ndarray:
+def eom2BPThrust(t: float, y: np.ndarray, yf: np.ndarray, m_dry: float, u: float = gm, thrust_fcn=None,
+                 Isp_s: float = 2000, T_max_kN: float = 0.001) -> np.ndarray:
     # Define parameters
     y_dot = np.zeros(y.shape)
     r = np.sqrt(np.sum(np.square(y[0:2])))
@@ -58,11 +59,14 @@ def eomMEE(L: float, x: np.ndarray, T: float, I_sp: float, m0: float) -> np.ndar
 
     # Define time derivatives of MEE
     dpdt = np.sqrt(p / u_earth_km3s2) * 2 * p / q * Delta_theta
-    dfdt = np.sqrt(p / u_earth_km3s2) * (np.sin(L) * Delta_r + 1 / q * ((q+1) + np.cos(L) + f) * Delta_theta - g / q * (h * np.sin(L) - k * np.cos(L)) * Delta_h)
-    dgdt = np.sqrt(p / u_earth_km3s2) * (-np.cos(L) * Delta_r + 1 / q * ((q+1) * np.sin(L) + g) * Delta_theta + f / q * (h * np.sin(L) - k * np.cos(L)) * Delta_h)
+    dfdt = np.sqrt(p / u_earth_km3s2) * (np.sin(L) * Delta_r + 1 / q * ((q+1) + np.cos(L) + f) * Delta_theta - g / q
+                                         * (h * np.sin(L) - k * np.cos(L)) * Delta_h)
+    dgdt = np.sqrt(p / u_earth_km3s2) * (-np.cos(L) * Delta_r + 1 / q * ((q+1) * np.sin(L) + g) * Delta_theta + f / q
+                                         * (h * np.sin(L) - k * np.cos(L)) * Delta_h)
     dhdt = np.sqrt(p / u_earth_km3s2) * s2 * np.cos(L) / 2 / q * Delta_h
     dkdt = np.sqrt(p / u_earth_km3s2) * s2 * np.sin(L) / 2 / q * Delta_h
-    dLdt = np.sqrt(p / u_earth_km3s2) * (h * np.sin(L) - k * np.cos(L)) * Delta_h + np.sqrt(u_earth_km3s2 * p) * (q / p)**2
+    dLdt = np.sqrt(p / u_earth_km3s2) * (h * np.sin(L) - k * np.cos(L)) * Delta_h + np.sqrt(u_earth_km3s2 * p)\
+           * (q / p) ** 2
     dmdt = - T / g0_ms2 / I_sp
 
     # Invert dLdt to get derivatives with respect to L instead of t
@@ -74,7 +78,7 @@ def eomMEE(L: float, x: np.ndarray, T: float, I_sp: float, m0: float) -> np.ndar
 
 
 def eom2BPThrustScaled(t: float, y: np.ndarray, yf: np.ndarray, m_dry: float, thrust_fcn, du: float, tu: float,
-                       mu: float, fu: float, Isp_s: float=2000, T_max_kN: float=0.001) -> np.ndarray:
+                       mu: float, fu: float, Isp_s: float = 2000, T_max_kN: float = 0.001) -> np.ndarray:
     # Define parameters
     y_dot = np.zeros(y.shape)
     r = np.sqrt(np.sum(np.square(y[0:2])))

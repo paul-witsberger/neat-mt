@@ -5,38 +5,45 @@
 [NEAT]
 fitness_criterion      = mean
 fitness_threshold      = 0
-pop_size               = 350
+pop_size               = 500
 reset_on_extinction    = 0
 fitness_plot_frequency = 10
+num_nodes = 120
+num_cases = 5
+do_terminal_lambert_arc  = False
+missed_thrust_allowed    = True
+missed_thrust_tbe_factor = 1.0
+missed_thrust_rd_factor  = 1.0
 
 [DefaultGenome]
-num_inputs              = 10
-num_hidden              = 2
+num_inputs              = 12
+num_hidden              = 3
 num_outputs             = 2
 initial_connection      = partial_direct 0.8
 feed_forward            = True
+# TODO tinker with these
 compatibility_disjoint_coefficient = 1.0
 compatibility_weight_coefficient   = 0.6
 
-conn_add_prob           = 0.0
-conn_delete_prob        = 0.0
-node_add_prob           = 0.0
-node_delete_prob        = 0.0
+conn_add_prob           = 0.02
+conn_delete_prob        = 0.02
+node_add_prob           = 0.02
+node_delete_prob        = 0.02
 
 activation_default      = tanh
 activation_default_out  = clamped
 activation_options      = tanh sigmoid relu sin gauss step
-activation_mutate_rate  = 0.01
+activation_mutate_rate  = 0.005
 
 aggregation_default     = sum
 aggregation_options     = sum
 aggregation_mutate_rate = 0.0
 
-bias_max_value          = 1.0
-bias_min_value          = -1.0
+bias_max_value          = 1.5
+bias_min_value          = -1.5
 bias_init_mean          = 0.0
 bias_init_stdev         = 0.4
-bias_mutate_rate        = 0.8
+bias_mutate_rate        = 0.4
 bias_replace_rate       = 0.005
 bias_mutate_power       = 0.05
 
@@ -48,19 +55,18 @@ response_mutate_power   = 0.0
 response_max_value      = 1.0
 response_min_value      = 0.0
 
-weight_max_value        = 1.0
-weight_min_value        = -1.0
+weight_max_value        = 1.5
+weight_min_value        = -1.5
 weight_init_mean        = 0.0
 weight_init_stdev       = 0.1
-weight_mutate_rate      = 0.8
+weight_mutate_rate      = 0.4
 weight_replace_rate     = 0.005
-weight_mutate_power     = 0.1
+weight_mutate_power     = 0.2
 
 enabled_default         = True
 enabled_mutate_rate     = 0
 
 [DefaultSpeciesSet]
-# compatibility_threshold = 3.149
 # compatibility_threshold = 2.63
 compatibility_threshold = 3.15
 

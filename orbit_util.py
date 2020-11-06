@@ -728,6 +728,7 @@ def lambert_min_dv(gm: float, state_0: np.ndarray, t0: float, low: float, high: 
                    targ_planet: str = tc.target_body, short: bool = True) -> (np.ndarray, np.ndarray, float):
     """
     Computes the minimum delta V transfer between two states assuming a two-impulse maneuver.
+    :param max_count:
     :param gm:
     :param state_0:
     :param t0:
@@ -742,7 +743,9 @@ def lambert_min_dv(gm: float, state_0: np.ndarray, t0: float, low: float, high: 
 
     # Fill in all inputs except TOF
     t0 *= c.sec_to_day * c.day_to_jc
-    f = lambda tof: _dv_from_tof(tof, t0, targ_planet, gm, r0, v0, short, tc.vallado_numiter, tc.vallado_rtol)
+
+    def f(tof):
+        return _dv_from_tof(tof, t0, targ_planet, gm, r0, v0, short, tc.vallado_numiter, tc.vallado_rtol)
 
     # Find minimum dv TOF
     tof_of_min_dv, min_dv = find_min(f, low, high, num_iter=max_count)
@@ -759,7 +762,7 @@ def lambert_min_dv(gm: float, state_0: np.ndarray, t0: float, low: float, high: 
 
 
 def _lambert_min_dv(k: float, state_0: np.ndarray, target_planet: str = 'mars', short: bool = True,
-                   do_print: bool = False) -> (np.ndarray, np.ndarray, float):
+                    do_print: bool = False) -> (np.ndarray, np.ndarray, float):
     """
     Computes the minimum delta V transfer between two states assuming a two-impulse maneuver.
     :param k:
@@ -788,8 +791,6 @@ def _lambert_min_dv(k: float, state_0: np.ndarray, target_planet: str = 'mars', 
     times = (tof * c.sec_to_day + c.reference_date_jd1950) * c.day_to_jc
     states_f = c.ephem(['a', 'e', 'i', 'w', 'O', 'M'], [target_planet], times)
     states_f = keplerian_to_inertial_3d(states_f, k, 'mean')
-
-
 
     dv = list()
     for _tof, _state_f in zip(tof, states_f):
@@ -1579,7 +1580,7 @@ def _hyperbolic_out_low_current(state_0: np.ndarray, rp_target: float, per_targe
     dv1_mag = (v_mag ** 2 + v_mag_para ** 2 - 2 * v_mag * v_mag_para * cos(abs(d_gamma))) ** 0.5
     beta = np.arccos((v_mag ** 2 + dv1_mag ** 2 - v_mag_para ** 2) / 2 / v_mag / dv1_mag)
     alpha = np.pi - beta
-    dv1_vec = np.array([cos(alpha), 0, -sin(alpha)]) * dv1_mag # TODO how should dv1_vec be changed for 3D?
+    dv1_vec = np.array([cos(alpha), 0, -sin(alpha)]) * dv1_mag  # TODO how should dv1_vec be changed for 3D?
     dv1_vec = rotate_vnc_to_inertial_3d(dv1_vec, state_0)
     v_transfer_vec = v_vec + dv1_vec
     # Compute delta v to get into target orbit at periapsis
@@ -1695,7 +1696,8 @@ def _hyperbolic_out_high_current(state_0: np.ndarray, rp_target: float, per_targ
 
 
 # Finished - there *may* be a way to optimally adjust energy and orientation instead of just orientation # Tested 4
-def _hyperbolic_out_high_optimal(state_0: np.ndarray, rp_target: float, per_target: float, gm: float) -> (list, np.ndarray):
+def _hyperbolic_out_high_optimal(state_0: np.ndarray, rp_target: float, per_target: float, gm: float)\
+        -> (list, np.ndarray):
     """
     :param state_0:
     :return:
@@ -1923,7 +1925,8 @@ def _hyperbolic_in_high_current(state_0: np.ndarray, rp_target: float, per_targe
 
 
 # Finished # Tested 4 # TODO possibly broken when outside ra_target
-def _hyperbolic_in_high_optimal(state_0: np.ndarray, rp_target: float, per_target: float, gm: float) -> (list, np.ndarray):
+def _hyperbolic_in_high_optimal(state_0: np.ndarray, rp_target: float, per_target: float, gm: float)\
+        -> (list, np.ndarray):
     """
     :param state_0:
     :param rp_target:
@@ -2089,8 +2092,8 @@ def _elliptical_in_low_current(state_0: np.ndarray, rp_target: float, per_target
             maneuvers = [dv1_vec, dv2_vec, tof12]
             return maneuvers
 
-    # # Descending, or above target apoapsis: maneuvers will be to set periapsis to correct altitude at current location,
-    # #     and then lower apoapsis to target altitude once reaching periapsis
+    # Descending, or above target apoapsis: maneuvers will be to set periapsis to correct altitude at current location,
+    #     and then lower apoapsis to target altitude once reaching periapsis
     else:
 
         a = a_from_gm_energy(gm, energy)
@@ -2131,7 +2134,8 @@ def _elliptical_in_low_current(state_0: np.ndarray, rp_target: float, per_target
 
 
 # Finished # Tested 8
-def _elliptical_in_low_optimal(state_0: np.ndarray, rp_target: float, per_target: float, gm: float) -> (list, np.ndarray):
+def _elliptical_in_low_optimal(state_0: np.ndarray, rp_target: float, per_target: float, gm: float)\
+        -> (list, np.ndarray):
     """
     :param state_0:
     :param rp_target:
@@ -2277,8 +2281,8 @@ def _elliptical_in_high_current(state_0: np.ndarray, rp_target: float, per_targe
             maneuvers = [dv1_vec, dv2_vec, tof12]
             return maneuvers
 
-    # # Descending, or above target apoapsis: maneuvers will be to set periapsis to correct altitude at current location,
-    # #     and then lower apoapsis to target altitude once reaching periapsis
+    # Descending, or above target apoapsis: maneuvers will be to set periapsis to correct altitude at current location,
+    #     and then lower apoapsis to target altitude once reaching periapsis
     else:
 
         a = a_from_gm_energy(gm, energy)
@@ -2318,7 +2322,8 @@ def _elliptical_in_high_current(state_0: np.ndarray, rp_target: float, per_targe
 
 
 # Finished # Tested 8
-def _elliptical_in_high_optimal(state_0: np.ndarray, rp_target: float, per_target: float, gm: float) -> (list, np.ndarray):
+def _elliptical_in_high_optimal(state_0: np.ndarray, rp_target: float, per_target: float, gm: float)\
+        -> (list, np.ndarray):
     """
     :param state_0:
     :param rp_target:
@@ -2355,7 +2360,7 @@ def _get_time_to_maneuver(a, e, f, gm, to_apoapsis):
         M = e * np.sinh(H) - H
         n = (gm / - a ** 3) ** 0.5
         per = per_from_gm_a(gm, -a)
-        tof = time_to_periapsis_from_per_M_n(per, M, n)
+        # tof = time_to_periapsis_from_per_M_n(per, M, n)
         tof = - M / n  # TODO when to use above line vs. this line?
     return tof
 
@@ -2465,8 +2470,8 @@ def _in_current(state_0: np.ndarray, rp_target: float, per_target: float, gm: fl
             #     dv1_vec = v0_vec / v0_mag * dv1_mag
             #     v1_vec = v0_vec + dv1_vec
             #     gamma1 = gamma0
-            # # If it failed, the s/c is coming in too sharply, and the periapsis can't be raised enough while maintaining a
-            # # constant flight path angle. Need a non-tangential maneuver to raise periapsis.
+            # # If it failed, the s/c is coming in too sharply, and the periapsis can't be raised enough while
+            # # maintaining a constant flight path angle. Need a non-tangential maneuver to raise periapsis.
             # else:
             a, e = a_e_from_rp_ra(rp_target, ra)
             v1_mag = v_from_gm_r_a(gm, r0_mag, a)
@@ -2579,8 +2584,8 @@ def _in_current(state_0: np.ndarray, rp_target: float, per_target: float, gm: fl
                 maneuvers = [dv1_vec, dv2_vec, tof12]
 
     else:
-    # 6. Check if r < ra_target. If not, do a maneuver to set current location as apoapsis and rp = rp_target. At
-    #       periapsis, capture.
+        # 6. Check if r < ra_target. If not, do a maneuver to set current location as apoapsis and rp = rp_target. At
+        #       periapsis, capture.
         if above_ra_target:
             a, e = a_e_from_rp_ra(rp_target, r0_mag)
             v1_mag = v_from_gm_r_a(gm, r0_mag, a)
@@ -2864,16 +2869,19 @@ if __name__ == "__main__":
             failed = False
 
             tof0 = period_from_inertial(state_0, gm, max_time_sec=tf)
-            traj1 = tbp.prop(list(state_0 / state_scales), [0., -tof0 / tu], [], 6, 2, 0, tol, tol, tf / n_steps / tu, step_type, 3)
+            traj1 = tbp.prop(list(state_0 / state_scales), [0., -tof0 / tu], [], 6, 2, 0, tol, tol, tf / n_steps / tu,
+                             step_type, 3)
             traj1 = (np.array(traj1)[:, 1:] * state_scales).T
             traj11 = []
             if tof0 == tf:
-                traj11 = tbp.prop(list(state_0 / state_scales), [0., tof0 / tu], [], 6, 2, 0, tol, tol, tf / n_steps / tu, step_type, 3)
+                traj11 = tbp.prop(list(state_0 / state_scales), [0., tof0 / tu], [], 6, 2, 0, tol, tol,
+                                  tf / n_steps / tu, step_type, 3)
                 traj11 = (np.array(traj11)[:, 1:] * state_scales).T
 
             v_transfer_vec = state_0[3:6] + dv1_vec
             state_transfer = np.hstack((r_vec, v_transfer_vec))
-            traj2 = tbp.prop(list(state_transfer / state_scales), [0., tof12 / tu], [], 6, 2, 0, tol, tol, tof12 / n_steps / tu, step_type, 3)
+            traj2 = tbp.prop(list(state_transfer / state_scales), [0., tof12 / tu], [], 6, 2, 0, tol, tol,
+                             tof12 / n_steps / tu, step_type, 3)
             traj2 = (np.array(traj2)[:, 1:] * state_scales).T
 
             v3_vec = traj2[3:, -1] + dv2_vec
@@ -2881,7 +2889,8 @@ if __name__ == "__main__":
             state3 = np.hstack((traj2[:3, -1], v3_vec))
             if len(maneuvers) == 3:
                 tof23 = period_from_inertial(state3, gm, max_time_sec=tf)
-            traj3 = tbp.prop(list(state3 / state_scales), [0., tof23 / tu], [], 6, 2, 0, tol, tol, tof23 / n_steps / tu, step_type, 3)
+            traj3 = tbp.prop(list(state3 / state_scales), [0., tof23 / tu], [], 6, 2, 0, tol, tol,
+                             tof23 / n_steps / tu, step_type, 3)
             traj3 = (np.array(traj3)[:, 1:] * state_scales).T
             trajs = [traj1, traj11, traj2, traj3]
             if len(maneuvers) > 3:
@@ -2889,14 +2898,16 @@ if __name__ == "__main__":
                 state4 = np.hstack((traj3[:3, -1], v4_vec))
                 if len(maneuvers) == 5:
                     tof34 = period_from_inertial(state4, gm, max_time_sec=tf)
-                traj4 = tbp.prop(list(state4 / state_scales), [0., tof34 / tu], [], 6, 2, 0, tol, tol, tof34 / n_steps / tu, step_type, 3)
+                traj4 = tbp.prop(list(state4 / state_scales), [0., tof34 / tu], [], 6, 2, 0, tol, tol,
+                                 tof34 / n_steps / tu, step_type, 3)
                 traj4 = (np.array(traj4)[:, 1:] * state_scales).T
                 trajs.append(traj4)
                 if len(maneuvers) > 5:
                     v5_vec = traj4[3:, -1] + dv4_vec
                     state5 = np.hstack((traj4[:3, -1], v5_vec))
                     per5 = period_from_inertial(state5, gm)
-                    traj5 = tbp.prop(list(state5 / state_scales), [0., per5 / tu], [], 6, 2, 0, tol, tol, per5 / n_steps / tu, step_type, 3)
+                    traj5 = tbp.prop(list(state5 / state_scales), [0., per5 / tu], [], 6, 2, 0, tol, tol,
+                                     per5 / n_steps / tu, step_type, 3)
                     traj5 = (np.array(traj5)[:, 1:] * state_scales).T
                     trajs.append(traj5)
                     a, e, i, w, o, f = inertial_to_keplerian_3d(traj5[:, -1], gm)
@@ -3107,7 +3118,8 @@ if __name__ == "__main__":
 
     test10 = False  # Test find_min()
     if test10:
-        f = lambda x: 0.4 * x ** 3 + 5 * x ** 2 - 7.2 * x + 0.4278
+        def f(x):
+            return 0.4 * x ** 3 + 5 * x ** 2 - 7.2 * x + 0.4278
         tests = np.arange(20) + 1
         for i in range(len(tests)):
             x, y = find_min(f, -10, 20, num_iter=tests[i])
@@ -3234,10 +3246,12 @@ if __name__ == "__main__":
         n_revolutions = 100
 
         tof0 = period_from_inertial(state_0, gm, max_time_sec=tf) * n_revolutions
-        traj_test = tbp.prop(list(state_0 / state_scales), [0., tof0 / tu], [], 6, 2, 0, rtol_test, atol_test, 1., step_type, 3)
+        traj_test = tbp.prop(list(state_0 / state_scales), [0., tof0 / tu], [], 6, 2, 0, rtol_test, atol_test, 1.,
+                             step_type, 3)
         traj_test = (np.array(traj_test)[:, 1:] * state_scales).T
 
-        traj_truth = tbp.prop(list(state_0 / state_scales), [0., tof0 / tu], [], 6, 2, 0, rtol_truth, atol_truth, 1., step_type, 3)
+        traj_truth = tbp.prop(list(state_0 / state_scales), [0., tof0 / tu], [], 6, 2, 0, rtol_truth, atol_truth, 1.,
+                              step_type, 3)
         traj_truth = (np.array(traj_truth)[:, 1:] * state_scales).T
 
         pos_err = mag3(traj_test[:3, -1] - traj_truth[:3, -1])

@@ -4,7 +4,6 @@ import numpy as np
 import h5py
 import multiprocessing as mp
 from itertools import repeat
-import yaml
 import neatfast as neat
 from neatfast import visualize
 from nnet import Neurocontroller
@@ -17,7 +16,7 @@ import boost_tbp
 
 
 def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool = False, save_traj: bool = False,
-                           traj_fname: str = "traj_data.hdf5"):
+                           traj_fname: str = "traj_data_", config_name='default'):
     # Load best generation from pickle file
     with open(fname, 'rb') as f:
         xopt = pickle.load(f)
@@ -25,7 +24,8 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
     # Recreate neurocontroller from file
     if neat_net:
         local_dir = os.path.dirname(__file__)
-        config_path = os.path.join(local_dir, 'config-feedforward')
+        config_name = 'default' if config_name is None else config_name
+        config_path = os.path.join(local_dir, 'config', 'config_' + config_name)
         config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction, neat.DefaultSpeciesSet,
                              neat.DefaultStagnation, config_path)
         net = neat.nn.FeedForwardNetwork.create(xopt, config)
@@ -43,7 +43,7 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
 
     # Create time vector
     # ti = np.power(np.linspace(0, 1, num_nodes), 3 / 2) * (tf - t0) + t0
-    ti = np.linspace(tc.t0, tc.tf, tc.num_nodes)
+    ti = np.linspace(tc.t0, tc.tf, config.num_nodes)
     ti = np.append(ti, ti[-1])
     ti /= tc.tu
 
@@ -55,8 +55,8 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
     yinit = tbp.prop(list(y0[tc.ind_dim] / tc.state_scales[:-1]), [tc.t0 / tc.tu, yinit_tf / tc.tu], [], 6, 2, 0,
                      tc.rtol, tc.atol, (yinit_tf - tc.t0) / (tc.n_terminal_steps + 1) / tc.tu, step_type, eom_type)
     yinit = (np.array(yinit)[:, 1:] * tc.state_scales[:-1]).T
-    y, miss_ind, full_traj, maneuvers = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, save_full_traj=True,
-                                                                     fixed_step=True)
+    y, miss_ind, full_traj, maneuvers = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, config,
+                                                                     save_full_traj=True, fixed_step=True)
     yfinal_tf = period_from_inertial(y[-1, :-1], gm=tc.gm, max_time_sec=tc.max_final_time)
     yfinal = tbp.prop(list(y[-1, tc.ind_dim] / tc.state_scales[:-1]), [tc.t0 / tc.tu, yfinal_tf / tc.tu], [], 6, 2, 0,
                       tc.rtol, tc.atol, (yfinal_tf - tc.t0) / (tc.n_terminal_steps + 1) / tc.tu, step_type, eom_type)
@@ -102,31 +102,32 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
 
     # Plot arrows with heads
     q_scale = np.max(np.linalg.norm(thrust_vec_body, axis=1)) * 20
-    ax.quiver(y[:-2, 0] / c.au_to_km, y[:-2, 1] / c.au_to_km, thrust_vec_inertial[:-2, 0], thrust_vec_inertial[:-2, 1],
-              angles='xy', zorder=8, width=0.0025, units='width', scale=q_scale, scale_units='width', minlength=0.1,
-              headaxislength=3, headlength=6, headwidth=6, color=arrow_color)
+    ax.quiver(y[:-2, 0] / c.au_to_km, y[:-2, 1] / c.au_to_km, thrust_vec_inertial[:-2, 0],
+              thrust_vec_inertial[:-2, 1], angles='xy', zorder=8, width=0.0025, units='width', scale=q_scale,
+              scale_units='width', minlength=0.1, headaxislength=3, headlength=6, headwidth=6, color=arrow_color)
 
     # Plot arrows without heads
     # q_scale = np.max(np.linalg.norm(thrust_vec_body, axis=1)) * 20
     # quiver_opts = {'angles': 'xy', 'zorder': 8, 'width': 0.004, 'units': 'width', 'scale': q_scale,
     #                'scale_units': 'width', 'minlength': 0.1, 'headaxislength': 0, 'headlength': 0, 'headwidth': 0,
     #                'color': arrow_color}
-    # ax.quiver(y[:-2, 0] / c.au_to_km, y[:-2, 1] / c.au_to_km, thrust_vec_inertial[:-2, 0], thrust_vec_inertial[:-2, 1],
-    #           **quiver_opts)
+    # ax.quiver(y[:-2, 0] / c.au_to_km, y[:-2, 1] / c.au_to_km, thrust_vec_inertial[:-2, 0],
+    #           thrust_vec_inertial[:-2, 1], **quiver_opts)
     # ax.quiver(y[-2:, 0] / c.au_to_km, y[-2:, 1] / c.au_to_km, thrust_vec_inertial[-2:, 0] * tc.T_max_kN * 20,
     #           thrust_vec_inertial[-2:, 1] * tc.T_max_kN * 20, **quiver_opts)
     # TODO make sure the above two lines are doing what they are supposed to
 
     # Plot the target orbit - also, save the figure since this is the last element of the plot
-    plot_traj_2d(ytarg, False, True, fig_ax=(fig, ax), label='Target', end=True, show_legend=False)
+    plot_traj_2d(ytarg, False, True, fig_ax=(fig, ax), label='Target', end=True, show_legend=False,
+                 config_name=config_name)
 
     # Plot mass and thrust
-    plot_mass_history(ti * tc.tu * c.sec_to_day, y[:, -1], mt_ind=miss_ind)
-    plot_thrust_history(ti[:-2] * tc.tu * c.sec_to_day, thrust_vec_body, mt_ind=miss_ind)
+    plot_mass_history(ti * tc.tu * c.sec_to_day, y[:, -1], mt_ind=miss_ind, config_name=config_name)
+    plot_thrust_history(ti[:-2] * tc.tu * c.sec_to_day, thrust_vec_body, mt_ind=miss_ind, config_name=config_name)
 
     # Save trajectory to file (states, times, controls)
     if save_traj:
-        with h5py.File(traj_fname, "w") as f:
+        with h5py.File(os.path.join('results', traj_fname + config_name + '.hdf5'), "w") as f:
             f.create_dataset('t', data=ti)
             f.create_dataset('x', data=y)
             f.create_dataset('u', data=thrust_vec_inertial)
@@ -146,19 +147,21 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
     #      ----> compare states at end of integration with no terminal maneuver case
     # Calculate and print fitness
     f, dr, dv = traj_fit_func(yf_actual, yf[tc.ind_dim[:-1]], y0, (y0[-1] - y[-1, -1]) / y0[-1], ti[-1] / ti[-2])
-    print('Final fitness = %f' % -f)
+    print('Final fitness = %f\n' % -f)
 
 
-def make_last_traj(print_mass: bool = True, save_traj: bool = True, neat_net: bool = True):
+def make_last_traj(print_mass: bool = True, save_traj: bool = True, neat_net: bool = True, config_name=None):
 
     # Choose file to load
     if neat_net:
-        fname = 'winner-feedforward'
+        ext = 'default' if config_name is None else config_name
+        fname = 'winner_' + ext
     else:
         fname = 'lgen.pkl'
     # Run
-    recreate_traj_from_pkl(fname, neat_net, print_mass=print_mass, save_traj=save_traj)
-
+    recreate_traj_from_pkl(os.path.join('results', fname), neat_net, print_mass=print_mass,
+                           save_traj=save_traj, config_name=config_name)
+    make_neat_network_diagram(config_name=config_name)
 
 
 def get_thrust_history(ti: np.ndarray, y: np.ndarray, yf: np.ndarray, thrust_fcn: Neurocontroller.get_thrust_vec_neat)\
@@ -190,36 +193,68 @@ def rotate_thrust(thrust_vec_body: np.ndarray, y: np.ndarray) -> np.ndarray:
     return thrust_vec_inertial
 
 
-def make_neat_network_diagram():
+def make_neat_network_diagram(config_name=None):
     """
     Creates a network diagram in .svg format showing the nodes and connections.
     """
     # Load network
-    with open('winner-feedforward', 'rb') as f:
+    ext = 'tmp' if config_name is None else config_name
+    with open('results//winner_' + ext, 'rb') as f:
         winner = pickle.load(f)
 
     # Load configuration
+    config_name = 'default' if config_name is None else config_name
     local_dir = os.path.dirname(__file__)
-    config_path = os.path.join(local_dir, 'config-feedforward')
+    config_path = os.path.join(local_dir, 'config', 'config_' + config_name)
     config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction, neat.DefaultSpeciesSet, neat.DefaultStagnation,
                          config_path)
 
+    _node_input_names_2d = {-1: '<<i>a<i><SUB>c</SUB>>',
+                            -2: '<<i>e</i><SUB>c</SUB>>',
+                            -3: '<&#969;<SUB>c</SUB>>', # omega
+                            -4: '<<i>f</i><SUB>c</SUB>>',
+                            -5: '<<i>a</i><SUB>t</SUB>>',
+                            -6: '<<i>e</i><SUB>t</SUB>>',
+                            -7: '<&#969;<SUB>t</SUB>>', # omega
+                            -8: '<<i>f</i><SUB>t</SUB>>',
+                            -9: '<&#956;>',  # mu, mass ratio
+                            -10: '<&#964;>'}  # tau, time ratio
+
+    _node_input_names_3d = {-1: '<<i>a</i><SUB>current</SUB>>',
+                            -2: '<<i>e</i><SUB>current</SUB>>',
+                            -3: '<<i>i</i><SUB>current</SUB>>',
+                            -4: '<&#969;<SUB>current</SUB>>',  # omega
+                            -5: '<&#937;<SUB>current</SUB>>',  # Omega
+                            -6: '<<i>f</i><SUB>current</SUB>>',
+                            -7: '<<i>a</i><SUB>target</SUB>>',
+                            -8: '<<i>e</i><SUB>target</SUB>>',
+                            -9: '<<i>i</i><SUB>target</SUB>>',
+                            -10: '<&#969;<SUB>target</SUB>>',  # omega
+                            -11: '<&#937;<SUB>target</SUB>>',  # Omega
+                            -12: '<<i>f</i><SUB>target</SUB>>',
+                            -13: '<&#956;>',  # mu, mass ratio
+                            -14: '<&#964;>'}  # tau, time ratio
+
+    _node_output_names_2d = {0: '<&#952;>',  # theta, thrust angle
+                             1: '<&#932;>'}  # Tau, throttle
+
+    _node_output_names_3d = {0: '<&#945;>',  # alpah, thrust angle (long)
+                             1: '<&#946;>',  # beta, thrust angle (lat)
+                             2: '<&#932;>'}  # Tau, throttle
+
     # Define node names
-    if tc.n_dim == 2:
-        node_names = {-1: 'a_c', -2: 'e_c', -3: 'w_c', -4: 'f_c', -5: 'a_t', -6: 'e_t', -7: 'w_t', -8: 'f_t',
-                      -9: 'mass', -10: 'time', 0: 'Angle', 1: 'Throttle'}
-    else:
-        node_names = {-1: 'a_c', -2: 'e_c', -3: 'i_c', -4: 'w_c', -5: 'om_c', -6: 'f_c', -7: 'a_t', -8: 'e_t',
-                      -9: 'i_t', -10: 'w_t', -11: 'om_t', -12: 'f_t', 0: 'Alpha', 1: 'Beta', 2: 'Throttle'}
+    node_names = _node_input_names_2d if tc.n_dim == 2 else _node_input_names_3d
+    node_names = {-i-1: node_names[-key-1] for i, key in enumerate(tc.input_indices)}
+    node_names.update(_node_output_names_2d if tc.n_outputs == 2 else _node_output_names_3d)
 
     # Draw network (remove disabled and unused nodes/connections)
-    visualize.draw_net(config, winner, node_names=node_names, filename="winner-feedforward-diagram.gv",
+    visualize.draw_net(config, winner, node_names=node_names, filename="results//winner-diagram.gv",
                        show_disabled=False, prune_unused=True)
 
 
 def load_traj(traj_fname: str = 'traj_data.hdf5') -> (np.ndarray, np.ndarray, np.ndarray):
     # Load saved trajectory data
-    with h5py.File(traj_fname, 'r') as f:
+    with h5py.File(os.path.join('results', traj_fname), 'r') as f:
         t = f['t'][()]
         x = f['x'][()]
         u = f['u'][()]
@@ -284,10 +319,10 @@ def evaluate_perturbed_trajectory(x_perturbed: np.ndarray, m: np.ndarray, i: int
 
     # Load best generation from pickle file and get thrust function
     local_dir = os.path.dirname(__file__)
-    config_path = os.path.join(local_dir, 'config-feedforward')
+    config_path = os.path.join(local_dir, 'config_default')
     config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction, neat.DefaultSpeciesSet,
                          neat.DefaultStagnation, config_path)
-    fname = 'winner-feedforward'
+    fname = 'winner'
     with open(fname, 'rb') as f:
         genome = pickle.load(f)
     net = neat.nn.FeedForwardNetwork.create(genome, config)
@@ -332,7 +367,7 @@ def save_traj_data(t: np.ndarray, x: np.ndarray, m: np.ndarray, u: np.ndarray,
                    traj_fname: str = 'traj_data_desensitized.hdf5'):
     x = np.reshape(x, (len(t), -1))
     x = np.hstack((x, m))
-    with h5py.File(traj_fname, 'w') as f:
+    with h5py.File(os.path.join('results', traj_fname), 'w') as f:
         f.create_dataset('t', data=t)
         f.create_dataset('x', data=x)
         f.create_dataset('u', data=u)
@@ -349,7 +384,7 @@ def desensitize():
 
     # Calculate sensitivity of original trajectory
     s = sensitivity(t, x, m, u)
-    np.save('traj_data_s.npy', s)
+    np.save('results//traj_data_s.npy', s)
     # print('Original sensitivity: %f' % s)
 
     # Calculate sensitivity of perturbed trajectories
@@ -362,16 +397,16 @@ def desensitize():
         s_perturbed = sensitivity(t, x_perturbed, m, u)
         dsdx[i] = ((s_perturbed - s) / step).T
         print('Finished %i / %i' % (i + 1, len(x)))
-    np.save('traj_data_dsdx.npy', dsdx)
+    np.save('results//traj_data_dsdx.npy', dsdx)
 
     # Calculate update to states
     # delta_x = s / dsdx / len(x)
     delta_x = np.matmul(np.linalg.inv(dsdx), s)
-    np.save('traj_data_delta_x.npy', delta_x)
+    np.save('results//traj_data_delta_x.npy', delta_x)
 
     # Update states
     x += delta_x
-    np.save('traj_data_x.npy', x)
+    np.save('results//traj_data_x.npy', x)
 
     # Save new trajectory to file
     save_traj_data(t, x, m, u)

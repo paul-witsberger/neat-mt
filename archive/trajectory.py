@@ -84,7 +84,7 @@ class Spacecraft:
             with open(fname, 'rb') as f:
                 genome = pickle.load(f)
         if config is None:
-            config_path = os.path.join(os.path.dirname(__file__), 'config-feedforward')
+            config_path = os.path.join(os.path.dirname(__file__), 'config_default')
             config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction, neat.DefaultSpeciesSet,
                                  neat.DefaultStagnation, config_path)
         neat_net = neat.nn.FeedForwardNetwork.create(genome, config)

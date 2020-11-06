@@ -23,7 +23,7 @@ def train():
     # Load the config file, which is assumed to live in
     # the same directory as this script.
     local_dir = os.path.dirname(__file__)
-    config_path = os.path.join(local_dir, 'config-feedforward')
+    config_path = os.path.join(local_dir, 'config_default')
     config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction, neat.DefaultSpeciesSet, neat.DefaultStagnation,
                          config_path)
 
@@ -56,7 +56,6 @@ def train():
 if __name__ == '__main__':
     run_eval()
     # train()
-
 
     # DONE figure out why fitness from makeLastTraj doesn't match that from traj_runner
     # ---- DONE> they do not start with same ICs - need to link compute_bcs() and make_new_bcs()

@@ -6,8 +6,11 @@ with open('.numba_config.yaml', 'w') as f:
 
 # NOTE: make sure the environment variable NUMBA_DISABLE_JIT is set to 1
 from builder import make_last_traj, make_neat_network_diagram
-make_last_traj()
-make_neat_network_diagram()
+# _config_name = 'coarse'
+# _config_name = 'intermediate'
+_config_name = 'final'
+make_neat_network_diagram(config_name=_config_name)
+make_last_traj(config_name=_config_name)
 
 # Re-enable jit
 with open('.numba_config.yaml', 'w') as f:

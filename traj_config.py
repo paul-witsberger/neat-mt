@@ -4,7 +4,8 @@ import numpy as np
 import constants as c
 from datetime import datetime
 
-max_generations = 500
+
+max_generations = 100
 
 gm = c.u_sun_km3s2
 gm_target = c.u_mars_km3s2
@@ -63,7 +64,7 @@ isp_chemical = 370  # for the final correction burns
 # Specify the indices of the input array that should be used
 # input_indices = np.array([0, 1, 2, 3, 8, 9])  # ignore target, 2D [6 nodes]
 # input_indices = np.array([0, 1, 3, 4, 6, 7, 9, 10, 12, 13])  # inertial inputs, ignore Z components, 3D [10 nodes]
-input_indices = np.array([0, 1, 3, 5, 6, 7, 9, 11, 12, 13])  # keplerian inputs, ignore inclination and lan [10 nodes]
+input_indices = np.array([0, 1, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13])  # keplerian inputs, ignore inclination [12 nodes]
 # input_indices = None  # all
 n_outputs = 2
 
@@ -108,7 +109,7 @@ n_out = 2
 # Define integration parameters
 rtol = 1e-8       # relative tolerance
 atol = 1e-8       # absolute tolerance
-num_nodes = 50   # number of thrust updates
+num_nodes = 10    # number of thrust updates
 n_steps = 20      # substeps between two nodes
 
 # Choose to add a penalty for going too close to the central body in the fitness function
@@ -132,8 +133,8 @@ missed_thrust_tbe_factor = 1.  # make less than one for events to be more freque
 missed_thrust_rd_factor = 1.  # make greater than one for events to be more severe
 
 # Specify missed thrust cases
-num_cases = 1
-num_outages = 0
+# num_cases = 1
+# num_outages = 0
 
 # Specify if a Lambert arc should be computed to match the final state
 do_terminal_lambert_arc = False
