@@ -6,11 +6,11 @@
 fitness_criterion      = mean
 fitness_threshold      = 0
 pop_size               = 800
-reset_on_extinction    = 0
+reset_on_extinction    = 1
 fitness_plot_frequency = 15
 num_nodes = 40
 num_cases = 1
-do_terminal_lambert_arc  = False
+do_terminal_lambert_arc  = True
 missed_thrust_allowed    = False
 missed_thrust_tbe_factor = 1.
 missed_thrust_rd_factor  = 1.
@@ -70,7 +70,7 @@ enabled_mutate_rate     = 0
 # compatibility_threshold = 2.0
 # compatibility_threshold = 2.63
 # 3 hidden nodes
-compatibility_threshold = 3.15
+compatibility_threshold = 2.9
 
 [DefaultStagnation]
 species_fitness_func = max

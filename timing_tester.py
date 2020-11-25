@@ -2,8 +2,9 @@ import numpy as np
 from time import time
 import timeit
 import os
-import neatfast as neat
 from operator import itemgetter
+import traj_config as tc
+import orbit_util as ou
 
 
 def timeit_auto(stmt="pass", setup="pass", repeat=3):
@@ -34,44 +35,28 @@ def timeit_auto(stmt="pass", setup="pass", repeat=3):
 # num_iter = int(1e4)
 
 # Set up
-config_name = 'default'
-local_dir = os.path.dirname(__file__)
-config_path = os.path.join(local_dir, 'config_' + config_name)
-config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction, neat.DefaultSpeciesSet, neat.DefaultStagnation,
-                     config_path)
-pop = neat.Population(config)
-
+state_f = np.array([-1.32427491e+08, -9.62901286e+07,  0.,  1.59757739e+01, -2.32281637e+01, 0.])
+tf = 9.146361329085716
+short = tc.capture_short
 
 def version1():
-    itemgetter(*[k for k in pop.population.keys()])(pop.population)
+    num_iter = 1
+    ou.lambert_min_dv(tc.gm, state_f, tf, tc.capture_time_low, tc.capture_time_high, num_iter, short=short)
 
 
 def version2():
-    list(map(pop.population.get, [k for k in pop.population.keys()]))
+    num_iter = 10
+    ou.lambert_min_dv(tc.gm, state_f, tf, tc.capture_time_low, tc.capture_time_high, num_iter, short=short)
 
 
 # Version 1
 version1()
-# ts = time()
-# for i in range(num_iter):
-#     version1()
-# tf = time()
-# total_1 = tf - ts
-# print('\n\nVersion 1\nTotal time = %e sec' % total_1)
-# print('Avg time = %e sec' % (total_1 / num_iter))
 print('Version 1')
 num, timing = timeit_auto(setup='from __main__ import version1', stmt='version1()')
 print('%i loops, best of 3: %.4f usec per loop' % (num, timing))
 
 # Version 2
 version2()
-# ts = time()
-# for i in range(num_iter):
-#     version2(inputs)
-# tf = time()
-# total_2 = tf - ts
-# print('\n\nVersion 2\nTotal time = %e sec' % total_2)
-# print('Avg time = %e sec\n\n' % (total_2 / num_iter))
 print('Version 2')
 num, timing = timeit_auto(setup='from __main__ import version2', stmt='version2()')
 print('%i loops, best of 3: %.4f usec per loop' % (num, timing))

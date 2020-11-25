@@ -10,10 +10,12 @@ import pickle
 from numba import njit
 from traj_config import gm, ind_dim
 from constants import au_to_km
+import warnings
 
 
-# Create 2-body integrator object
+# Create 2-body integrator object and lambert function
 tbp = boost_tbp.TBP()
+lambert = boost_tbp.maneuvers().lambert
 year_to_sec = c.year_to_sec
 day_to_sec = c.day_to_sec
 
@@ -104,9 +106,6 @@ def eval_traj_neat(genome: neat.genome.DefaultGenome, config: neat.config.Config
 
     else:
         f = f[0]
-
-    # t_act_f = time.time()
-    # print('Time to compute activation: %.2e sec' % (t_act_f - t_act_0))
 
     return -f
 
@@ -216,7 +215,7 @@ def eval_traj_ga(weights: np.ndarray, params: list) -> float:
 """
 
 
-@njit
+# @njit
 def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float, t_ratio: float = 0.) \
         -> (float, float, float):
     """
@@ -283,10 +282,6 @@ def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float,
         f += max(squares[i], abses[i])
     f += m_ratio * mass_weight + (t_ratio - 1) * time_weight + penalty[0]
 
-    # f = np.sum(np.max((np.square(states * state_weights),
-    #                    np.abs(   states * state_weights)), axis=0))\
-    #     + m_ratio * mass_weight + (t_ratio - 1) * time_weight + penalty[0]
-
     # Penalize going too close to central body
     if tc.rp_penalty:
         if rp1 < tc.min_allowed_rp:
@@ -309,7 +304,7 @@ def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float,
 # TODO go back and look into redoing how time vector is saved - could probably adjust it to account for updated
 #      maneuver calculations
 def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat, y0: np.ndarray, ti: np.ndarray,
-                                 yf: np.ndarray, config=neat.config.Config, save_full_traj: bool = False,
+                                 yf: np.ndarray, config: neat.config.Config, save_full_traj: bool = False,
                                  fixed_step: bool = tc.fixed_step) -> \
                                 (np.ndarray, np.ndarray, np.ndarray, list):
     """
@@ -360,7 +355,6 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
 
     full_traj = np.empty((len(ti) * tc.n_steps, state_size + 1), dtype=np.float64)
     for i in range(len(ti) - 2):
-        # t_act_0 = time.process_time()
         # Check if orbital energy is within reasonable bounds - terminate integration if not
         r_mag = ou.mag3(y[i, :3])
         v_mag = ou.mag3(y[i, 3:6])
@@ -381,7 +375,6 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
             thrust = np.array([0., 0, 0])
         else:
             # Query NN to get next thrust vector
-            # nn_input = np.hstack((y[i, tc.ind_dim], yf[tc.ind_dim[:-1]], mass_ratio, time_ratio))
             nn_input = np.empty(tc.n_dim * 4 + 2, dtype=np.float64)
             nn_input[:tc.n_dim * 2] = y[i, tc.ind_dim]
             nn_input[2 * tc.n_dim:4 * tc.n_dim] = yf[tc.ind_dim[:-1]]
@@ -400,24 +393,15 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
                      float(thrust[1]), float(thrust[2])]
 
         # Propagate from the current state until the next time step
-        # traj = tbp.prop(list(y[i] / tc.state_scales), [ti[i], ti[i+1]], param, state_size, time_size, param_size,
-        #                 tc.rtol, tc.atol, step_size, integrator_type, eom_type)
-        asdf = (list(y[i] / tc.state_scales), [ti[i], ti[i + 1]], param, state_size, time_size, param_size,
-                tc.rtol, tc.atol, step_size, integrator_type, eom_type)
-        traj = asdfasdf(*asdf)
+        traj = tbp.prop(list(y[i] / tc.state_scales), [ti[i], ti[i+1]], param, state_size, time_size, param_size,
+                        tc.rtol, tc.atol, step_size, integrator_type, eom_type)
 
         # Save full trajectory including intermediate states
         if save_full_traj:
-            try:
-                full_traj[i * tc.n_steps:(i + 1) * tc.n_steps] = traj[1:]
-            except ValueError as execption:
-                full_traj[i * tc.n_steps:(i + 1) * tc.n_steps - 1] = traj[1:]
-                n_skipped
-                print('i = %i' % i)
+            full_traj[i * tc.n_steps:(i + 1) * tc.n_steps] = traj[1:]
+
         # Save final state of current leg
-        y[i+1] = np.array(traj[-1])[1:] * tc.state_scales
-        # t_act_f = time.process_time()
-        # print('Time to propagate: %.2e sec' % (t_act_f - t_act_0))
+        y[i + 1] = np.array(traj[-1])[1:] * tc.state_scales
 
     # Compute maneuvers required to capture into a target orbit
     if config.do_terminal_lambert_arc:
@@ -427,13 +411,14 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
         pos_error = ou.mag3(state_rel[:3])
         # Check if final position is "close" to target position - if not, compute a Lambert arc to match target state
         if pos_error > tc.r_limit_soi * c.r_soi_mars:  # very far away
+            # print('Performing far capture...')
             # TODO convert ti[-1] to appropriate units
             maneuvers = ou.lambert_min_dv(tc.gm, state_f, ti[-1], tc.capture_time_low, tc.capture_time_high,
-                                          short=tc.capture_short)
-            # maneuvers = ou.lambert_min_dv(tc.gm, state_f, yf)
+                                          max_count=10, short=tc.capture_short)
             gm_capture = tc.gm
             change_frame = False
         else:
+            print('Performing close capture')
             # dv1, dv2, tof = ou.min_dv_capture(y[-2, :6], yf, c.u_mars_km3s2, tc.capture_periapsis_radius_km)
             rp_target = c.r_mars_km + tc.capture_periapsis_alt_km
             maneuvers = ou.capture(state_rel, rp_target, tc.capture_period_day, tc.gm, c.r_soi_mars,
@@ -494,15 +479,13 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
     return y, miss_ind, full_traj, maneuvers
 
 
-def asdfasdf(*args):
-    return tbp.prop(*args)
-
-
 @njit
 def calculate_missed_thrust_events(ti: np.ndarray, tbe_factor=1.0, rd_factor=1.0) -> np.ndarray:
     """
     Return indices of random missed thrust events that occur according to the Weibull distributions given by Imken et al
     :param ti:
+    :param tbe_factor:
+    :param rd_factor:
     :return:
     """
     # Define Weibull distribution parameters
@@ -550,11 +533,7 @@ def calculate_prop_margins(genome: neat.genome.DefaultGenome, config: neat.confi
     :return:
     """
 
-    # Scales for network inputs
-    # du = np.max((a0_max, af_max))
-    # tu = np.sqrt(du ** 3 / gm)
-    # mu = m0
-    # fu = mu * du / tu / tu
+    warnings.warn('This function has not been tested since major code updates.')
 
     # Create network and get thrust vector
     net = neat.nn.FeedForwardNetwork.create(genome, config)
@@ -567,7 +546,6 @@ def calculate_prop_margins(genome: neat.genome.DefaultGenome, config: neat.confi
     ti /= tc.tu
 
     # Create a new case based on the given boundary condition boundary conditions
-    # y0, yf = make_new_bcs()
     y0, yf = compute_bcs()
     y0 = np.hstack((y0, tc.m0))
     print(y0)
@@ -584,9 +562,10 @@ def calculate_prop_margins(genome: neat.genome.DefaultGenome, config: neat.confi
             missed_thrust_allowed = False
         else:
             missed_thrust_allowed = True
+        config.missed_thrust_allowed = missed_thrust_allowed
 
         # Integrate trajectory
-        y, miss_ind, full_traj, dv1, dv2 = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, missed_thrust_allowed)
+        y, miss_ind, full_traj, dv1, dv2 = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, config)
 
         yf_actual = y[-2, tc.ind_dim]
         f, _dr, _dv = traj_fit_func(yf_actual, yf[tc.ind_dim[:-1]], y0, (y0[-1] - y[-1, -1]) / y0[-1], ti[-1] / ti[-2])
@@ -629,6 +608,7 @@ def run_margins():
     Runner function to calculate propellant margins for a given neural network.
     :return:
     """
+    warnings.warn('This function has not been tested since major code updates.')
     local_dir = os.path.dirname(__file__)
     config_path = os.path.join(local_dir, 'config', 'config_default')
     config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction, neat.DefaultSpeciesSet, neat.DefaultStagnation,

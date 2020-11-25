@@ -5,4 +5,4 @@ scratch_[0-9].py
 **__pycache__
 **.idea
 *.exe*
-**_neatfast
+**data

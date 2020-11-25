@@ -1,0 +1,25 @@
+cmake_minimum_required(VERSION 3.12.0)
+PROJECT (tbp_full)
+
+set(PYTHON_VERSION 36)
+set(BOOST_ROOT "C:/Users/pawit/Documents/boost/boost_1_73_0")
+set(PYTHON_ROOT "C:/Program Files/Python36")
+set(VALLADO_ROOT "C:/Users/pawit/Documents/codes/src/vallado")
+
+set(BOOST_INCLUDE_DIR ${BOOST_ROOT})
+file(GLOB BOOST_LIBRARIES ${BOOST_ROOT}/stage/lib/*.lib)
+set(PYTHON_INCLUDE_DIR "${PYTHON_ROOT}/include")
+file(GLOB PYTHON_LIBRARIES ${PYTHON_ROOT}/libs/python*[^d].lib)
+set(VALLADO_INCLUDE_DIR ${VALLADO_ROOT})
+
+add_subdirectory(src/vallado)
+
+add_library(test_tbp_full SHARED src/test_full_tbp.cpp)
+target_include_directories(test_tbp_full PUBLIC ${VALLADO_INCLUDE_DIR} ${BOOST_INCLUDE_DIR} ${PYTHON_INCLUDE_DIR})
+target_link_libraries(test_tbp_full vallado ${BOOST_LIBRARIES} ${PYTHON_LIBRARIES})
+set_target_properties(test_tbp_full PROPERTIES SUFFIX ".pyd")
+
+install(TARGETS test_tbp_full DESTINATION ${CMAKE_SOURCE_DIR}/tbp_full_bin)
+install(DIRECTORY "${BOOST_ROOT}/stage/lib/" DESTINATION ${CMAKE_SOURCE_DIR}/tbp_full_bin FILES_MATCHING PATTERN "*.lib")
+install(DIRECTORY "${BOOST_ROOT}/stage/lib/" DESTINATION ${CMAKE_SOURCE_DIR}/tbp_full_bin FILES_MATCHING PATTERN "*.dll")
+install(DIRECTORY ${VALLADO_ROOT} DESTINATION ${CMAKE_SOURCE_DIR}/tbp_full_bin FILES_MATCHING PATTERN "*.lib")

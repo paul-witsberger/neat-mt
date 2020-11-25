@@ -146,9 +146,9 @@ capture_period_day = 10
 capture_low_not_high = False  # If true, capture into low circular orbit; if false, capture into high elliptic orbit
 capture_current_not_optimal = True  # If true, capture at current location; if false, capture at optimal point on orbit
 max_final_time = 20 * c.day_to_sec
-r_limit_soi = 20  # Limit in SOI radii of how far away a capture maneuver can occur
-vallado_rtol = 1e-8  # Tolerance for vallado() convergence
-vallado_numiter = 30  # Number of iterations allowed in vallado()
+r_limit_soi = 5  # Limit in SOI radii of how far away a capture maneuver can occur
+vallado_rtol = 1e-14  # Tolerance for vallado() convergence
+vallado_numiter = 50  # Number of iterations allowed in vallado()
 capture_short = True
 if capture_short:
     capture_time_low = 10  # minimum time of Lambert arc, days

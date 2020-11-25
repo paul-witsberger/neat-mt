@@ -66,7 +66,7 @@ if __name__ == '__main__':
     # NOTE add -OO to configuration when running for slight speed improvement
     _get_timing = False
     _parallel = True
-    _max_gens = [2, 2, 2]
+    _max_gens = [100, 50, 20]
 
     t_start = time.time()
     if _get_timing:

@@ -1,5 +1,4 @@
 #define _CRT_SECURE_NO_WARNINGS
-
 #include <iostream>
 #include <algorithm>
 #include <cmath>
@@ -19,6 +18,8 @@
 #include <boost/numeric/ublas/io.hpp>
 #include <boost/range/algorithm.hpp>
 #include <boost/math/special_functions/sign.hpp>
+
+#include "astIOD.h"
 
 using namespace std;
 using namespace boost::numeric::odeint;
@@ -125,7 +126,6 @@ Mat transpose(const Mat &mat) {
 
 
 Vec rotateVNCtoInertial3D(const Vec &vec, const Vec &state) {
-	int i;
 	Vec r_vec, v_vec, h_vec, v_hat, n_hat, c_hat, product;
 	Mat dcm, dcm_t;
 	// Split state into position and velocity vectors
@@ -559,21 +559,93 @@ struct TBP {
 	}
 };
 
-BOOST_PYTHON_MODULE(boost_tbp) {
-	class_<TBP>("TBP")
-		.def("prop", &TBP::propPy);
+struct maneuvers {
+	boost::python::list lambert(double gm, boost::python::list &r1, boost::python::list &r2, double dtsec, bool direct)
+	{
+		double _r1[3], _r2[3], v1Battin[3], v1[3], v2[3];
+		int error, nrev = 0;
+		char dm, df = 'd';
+		dm = (direct ? 's' : 'l');
+		std::string fname = "test_lambertbattin.txt";
+		bool printToFile = false;
+		FILE *outfile;
+
+		for (int i = 0; i < 3; ++i) {
+			_r1[i] = boost::python::extract<double>(r1[i]);
+			_r2[i] = boost::python::extract<double>(r2[i]);
+		}
+
+		// lambertbattin
+		if (printToFile)
+			outfile = fopen(fname.c_str(), "w");
+		astIOD::lambertbattin(_r1, _r2, v1Battin, dm, df, nrev, dtsec, v1, v2, error, outfile, printToFile);
+		if (printToFile)
+			fclose(outfile);
+
+		// int n = sizeof(v1) / sizeof(v1[0]);
+		// std::vector<double> vecV1(v1, v1 + n);
+		// std::vector<double> vecV2(v2, v2 + n);
+
+		// boost::python::list listV1 = toPythonList(vecV1);
+		// boost::python::list listV2 = toPythonList(vecV2);
+		boost::python::list listV1, listV2;
+
+		for (int i = 0; i < 3; ++i) {
+            listV1.append(v1[i]);
+            listV2.append(v2[i]);
+        }
+
+		boost::python::list outList;
+		outList.append(listV1);
+		outList.append(listV2);
+		outList.append(error);
+
+		return outList;
+	}
+
+    template<class T>
+    boost::python::list toPythonList(std::vector<T> vector) {
+        typename std::vector<T>::iterator iter;
+        boost::python::list list;
+        for (iter = vector.begin(); iter != vector.end(); ++iter) {
+            list.append(*iter);
+        }
+        return list;
+    }
+
+    template<class T>
+    boost::python::list toTwoDimPythonList(std::vector<std::vector<T> > vector) {
+        typename std::vector<std::vector<T> >::iterator iter;
+
+        boost::python::list list;
+        for (iter = vector.begin(); iter != vector.end(); ++iter) {
+            list.append(toPythonList(*iter));
+        }
+        return list;
+    }
 };
 
-int main() {
-	Vec vec_vnc = {1, 0, 0};
-	Vec state = {0, 1e8, 0, -29, 0, 0};
-	Vec vec_i = rotateVNCtoInertial3D(vec_vnc, state);
+BOOST_PYTHON_MODULE(boost_tbp) {
+	class_<TBP>("TBP").def("prop", &TBP::propPy);
+	class_<maneuvers>("maneuvers").def("lambert", &maneuvers::lambert);
+};
 
-	cout << "VNC:\n";
-	print(vec_vnc);
-	cout << "Inertial:\n";
-	print(vec_i);
+// void export_prop()
+// {
+// 	boost::python::class_<TBP>("TBP").def("prop", &TBP::propPy);
+// }
 
-	cout << endl;
-	return 0;
-}
+
+// int main() {
+// 	Vec vec_vnc = {1, 0, 0};
+// 	Vec state = {0, 1e8, 0, -29, 0, 0};
+// 	Vec vec_i = rotateVNCtoInertial3D(vec_vnc, state);
+
+// 	cout << "VNC:\n";
+// 	print(vec_vnc);
+// 	cout << "Inertial:\n";
+// 	print(vec_i);
+
+// 	cout << endl;
+// 	return 0;
+// }

@@ -599,7 +599,7 @@ def c3(psi: float) -> float:
     return res
 
 
-@njit
+# @njit
 def vallado(k: float, r0: np.ndarray, r: np.ndarray, tof: float, short: bool, numiter: int, rtol: float) \
         -> (np.ndarray, np.ndarray):
     """
@@ -635,7 +635,7 @@ def vallado(k: float, r0: np.ndarray, r: np.ndarray, tof: float, short: bool, nu
     psi_low = -4 * np.pi ** 2
     psi_up = 4 * np.pi ** 2
     count = 0
-    psi_low_increment = 1e-2  # TODO this counter has a large effect on overall runtime if too small (!!!!)
+    psi_low_increment = 1e0  # TODO this counter has a large effect on overall runtime if too small (!!!!)
 
     while count < numiter:
         y = norm_r0_plus_norm_r + A * (psi * c3(psi) - 1) / c2(psi) ** 0.5
@@ -664,7 +664,9 @@ def vallado(k: float, r0: np.ndarray, r: np.ndarray, tof: float, short: bool, nu
         psi = (psi_up + psi_low) / 2
     else:
         # raise RuntimeError("Maximum number of iterations reached")
+        # warnings.warn('Maximum number of iterations reached in vallado')
         pass
+    print('count = %i | tof = %.4f' % (count, tof / 86400))
 
     f = 1 - y / norm_r0
     g = A * (y / k) ** 0.5
@@ -679,46 +681,54 @@ def vallado(k: float, r0: np.ndarray, r: np.ndarray, tof: float, short: bool, nu
 
 def find_min(f, low: float, high: float, num_iter: int = 10):
     assert high > low
+    # Initialize guesses at [0, 1/3, 2/3, 1]
     coords = np.empty((2, 4))
     coords[0, :] = [low, (high - low) / 3 + low, (high - low) * 2 / 3 + low, high]
     _min = np.infty
-    # count = 0
+    # Evaluate initial guesses
     for i in range(4):
         coords[1, i] = f(coords[0, i])
-        # count += 1
+    # Main loop
     for i in range(num_iter):
+        # Identify best solution and its index
         _min = min(coords[1])
         ind_min = np.argmin(coords[1])
+        # Adjust search region based on new min
         low = coords[0, max(ind_min - 1, 0)]
         high = coords[0, min(ind_min + 1, coords.shape[1] - 1)]
         x_min = coords[0, ind_min]
         new_coord_low = (x_min - low) / 2 + low
         new_coord_high = (high - x_min) / 2 + x_min
+        # Evaluate the lower of the two new points
         new_pt_low = f(new_coord_low)
-        # count += 1
         coords = np.insert(coords, ind_min, [new_coord_low, new_pt_low], axis=1)
+        # If lower point is better, can skip to next iteration; otherwise evaluate higher point
         if new_pt_low < _min:
             continue
         else:
             new_pt_high = f(new_coord_high)
-            # count += 1
             coords = np.insert(coords, ind_min + 2, [new_coord_high, new_pt_high], axis=1)
-    # print('Evaluated %i times' % count)
+    # Record best ever
     min_x, min_y = coords[0, np.argmin(coords[1])], min(coords[1])
     return min_x, min_y
 
-
-# Define function to compute dv_mag as a function of TOF
+import boost_tbp
+lambert = boost_tbp.maneuvers().lambert
 def _dv_from_tof(tof, t0, targ_planet, gm, r0, v0, short, numiter, rtol):
     time = tof * c.day_to_jc + t0
     state_f = c.ephem(['a', 'e', 'i', 'w', 'O', 'M'], [targ_planet], np.array([time]))
+    state_f[2] = 0.  # make coplanar
     state_f = keplerian_to_inertial_3d(state_f, gm, 'mean')
-    state_f[[2, 5]] = 0.
-    sol = vallado(gm, r0, state_f[:3], tof * c.day_to_sec, short=short, numiter=numiter, rtol=rtol)
-    return mag3(sol[0] - v0) + hyperbolic_capture_from_infinity(mag3(state_f[3:6] - sol[1]),
-                                                                tc.capture_periapsis_radius_km,
-                                                                tc.capture_period_day * c.day_to_sec,
-                                                                tc.gm_target)
+    # sol = vallado(gm, r0, state_f[:3], tof * c.day_to_sec, short=short, numiter=numiter, rtol=rtol)
+    sol = lambert(float(gm), r0.tolist(), state_f[:3].tolist(), float(tof * c.day_to_sec), short)
+    if sol[2] == 0:
+        return mag3(sol[0] - v0) + mag3(state_f[3:6] - sol[1])
+    else:
+        return np.infty
+    # return mag3(sol[0] - v0) + hyperbolic_capture_from_infinity(mag3(state_f[3:6] - sol[1]),
+    #                                                             tc.capture_periapsis_radius_km,
+    #                                                             tc.capture_period_day * c.day_to_sec,
+    #                                                             tc.gm_target)
 
 
 # TODO Do I really need to find the min dv TOF, or can I just set it to e.g. 60 days and have the network learn around
@@ -742,23 +752,36 @@ def lambert_min_dv(gm: float, state_0: np.ndarray, t0: float, low: float, high: 
     r0, v0 = state_0[:3], state_0[3:6]
 
     # Fill in all inputs except TOF
-    t0 *= c.sec_to_day * c.day_to_jc
+    t0_jc = t0 * c.sec_to_day * c.day_to_jc
 
-    def f(tof):
-        return _dv_from_tof(tof, t0, targ_planet, gm, r0, v0, short, tc.vallado_numiter, tc.vallado_rtol)
+    def f_short(tof):
+        return _dv_from_tof(tof, t0_jc, targ_planet, gm, r0, v0, True, tc.vallado_numiter, tc.vallado_rtol)
+    # def f_long(tof):
+    #     return _dv_from_tof(tof, t0_jc, targ_planet, gm, r0, v0, False, tc.vallado_numiter, tc.vallado_rtol)
 
     # Find minimum dv TOF
-    tof_of_min_dv, min_dv = find_min(f, low, high, num_iter=max_count)
+    tof_of_min_dv_s, min_dv_s = find_min(f_short, low, high, num_iter=max_count)
+    # tof_of_min_dv_l, min_dv_l = find_min(f_long, low, high, num_iter=max_count)
+    print('TOF short = %f\t|\tmin_dv_s = %e' % (tof_of_min_dv_s, min_dv_s))
+    # print('TOF long = %f\t|\tmin_dv_l = %e\n' % (tof_of_min_dv_l, min_dv_l))
+
+    # if min_dv_s < min_dv_l:
+    tof_of_min_dv = tof_of_min_dv_s
+    short = True
+    # else:
+    #     tof_of_min_dv = tof_of_min_dv_l
+    #     short = False
 
     # Recompute best case to get dv vectors
-    t = tof_of_min_dv * c.day_to_jc + t0
-    state_f = c.ephem(['a', 'e', 'i', 'w', 'O', 'M'], [targ_planet], np.array([t]))
+    tf_jc = tof_of_min_dv * c.day_to_jc + t0_jc
+    state_f = c.ephem(['a', 'e', 'i', 'w', 'O', 'M'], [targ_planet], np.array([tf_jc]))
+    state_f[2] = 0.
     state_f = keplerian_to_inertial_3d(state_f, gm, 'mean')
-    state_f[[2, 5]] = 0.
     sol = vallado(gm, r0, state_f[:3], tof_of_min_dv * c.day_to_sec, short, tc.vallado_numiter, tc.vallado_rtol)
-    dv1 = sol[0] - v0
-    dv2 = state_f[3:6] - sol[1]
-    return dv1, dv2, tof_of_min_dv
+    # dv1 = sol[0] - v0
+    # dv2 = state_f[3:6] - sol[1]
+    # return dv1, dv2, tof_of_min_dv
+    return sol, tof_of_min_dv
 
 
 def _lambert_min_dv(k: float, state_0: np.ndarray, target_planet: str = 'mars', short: bool = True,
@@ -3128,41 +3151,46 @@ if __name__ == "__main__":
             print(y)
             print()
 
-    test11 = False  # Test lambert_min_dv()
+    test11 = True  # Test lambert_min_dv()
     if test11:
-        r0_vec = np.array([-1, 0.5, 0])
+        r0_vec = np.array([0, -1, 0], float)
         r0_vec = r0_vec / mag3(r0_vec) * c.a_mars_km * 0.95
-        v0_vec = np.array([-0.5, -1, 0])
+        v0_vec = np.matmul(np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1.]]), r0_vec)
         v0_vec = v0_vec / mag3(v0_vec) * (c.u_sun_km3s2 / mag3(r0_vec)) ** 0.5
         state_0 = np.hstack((r0_vec, v0_vec))
-        # low, high = 20, 400
-        # max_count = 10
-        # short = False
-        t0 = tc.times_jd1950_jc[-1] / c.day_to_jc * c.day_to_sec
+        low, high = 60, 61
+        max_count = 0
+        short = False
+        t0 = float(tc.times_jd1950_jc[-1] / c.day_to_jc * c.day_to_sec)
 
-        # Initialize first time
-        lambert_min_dv(tc.gm, state_0, t0, tc.capture_time_low, tc.capture_time_high, short=tc.capture_short)
-
+        # dv1_vec, dv2_vec, tof12 = lambert_min_dv(tc.gm, state_0, t0, low, high, max_count=max_count, short=short)
+        # lambert_min_dv(tc.gm, state_0, t0, low, high, max_count=max_count, short=short)
         import time
-        timer_start = time.time()
-        dv1_vec, dv2_vec, tof12 = lambert_min_dv(tc.gm, state_0, t0, tc.capture_time_low, tc.capture_time_high,
-                                                 short=tc.capture_short)
-        timer_end = time.time()
+        lambert_t0 = time.time()
+        sol, tof12 = lambert_min_dv(tc.gm, state_0, t0, low, high, max_count=max_count, short=short)
+        lambert_tf = time.time()
+        print('\nElapsed time in lambert_min_dv(): %e sec\n' % (lambert_tf - lambert_t0))
 
+        t0_jc = t0 * c.sec_to_day * c.day_to_jc
+        tf_jc = tof12 * c.day_to_jc + t0_jc
+        mars_f = c.ephem(['a', 'e', 'i', 'w', 'O', 'M'], ['mars'], np.array([tf_jc]))
+        mars_f[2] = 0.
+        mars_f = keplerian_to_inertial_3d(mars_f, gm=c.u_sun_km3s2, mean_or_true='mean')
+
+        dv1_vec = sol[0] - v0_vec
+        dv2_vec = mars_f[3:6] - sol[1]
+
+        print("Delta V's:")
         print(dv1_vec)
         print(dv2_vec)
-        print('Total Delta V = %f km/s' % (mag3(dv1_vec) + mag3(dv2_vec)))
-        print('Time-of-flight = %f days' % tof12)
-        print()
-        print('Elapsed time = %0.5e sec' % (timer_end - timer_start))
+        print('\nTotal Delta V = %f km/s' % (mag3(dv1_vec) + mag3(dv2_vec)))
+        print('Time-of-flight = %f days\n' % tof12)
 
         # Propagate transfer
         gm = c.u_sun_km3s2
         r_vec, v_vec = state_0[:3], state_0[3:]
         tf = 50000.
-        tol = 1e-10
-        e_tol = 1e-4
-        a_tol = 1e-1
+        tol = 1e-8
         n_steps = 201
         du = c.a_mars_km
         tu = (du ** 3 / gm) ** 0.5
@@ -3170,67 +3198,63 @@ if __name__ == "__main__":
         step_type = 0
         failed = False
 
+        # Propagate initial spacecraft orbit
         tof0 = period_from_inertial(state_0, gm, max_time_sec=tf)
-        traj1 = tbp.prop(list(state_0 / state_scales), [0., -tof0 / tu], [], 6, 2, 0, tol, tol, tf / n_steps / tu,
-                         step_type, 3)
+        traj1 = tbp.prop(list(state_0 / state_scales), [0., -tof0 / tu], [], 6, 2, 0, tol, tol,
+                         tof0 / n_steps / tu - 1e-10, step_type, 3)
         traj1 = (np.array(traj1)[:, 1:] * state_scales).T
-        traj11 = []
-        # if tof0 == tf:
-        # traj11 = tbp.prop(list(state_0 / state_scales), [0., tof0 / tu], [], 6, 2, 0, tol, tol, tf / n_steps / tu,
-        #                   step_type, 3)
-        # traj11 = (np.array(traj11)[:, 1:] * state_scales).T
 
+        # Propagate transfer orbit
         v_transfer_vec = state_0[3:6] + dv1_vec
         state_transfer = np.hstack((r_vec, v_transfer_vec))
         traj2 = tbp.prop(list(state_transfer / state_scales), [0., tof12 * c.day_to_sec / tu], [], 6, 2, 0, tol, tol,
-                         tof12 * c.day_to_sec / n_steps / tu, step_type, 3)
+                         tof12 * c.day_to_sec / n_steps / tu - 1e-10, step_type, 3)
         traj2 = (np.array(traj2)[:, 1:] * state_scales).T
 
+        # Compute error between final propagated position and target position
+        mars_f_dif = mag3(mars_f[:3] - traj2[:3, -1])
+        print('mars_f_dif [km] = %f' % mars_f_dif)
+        print('mars_f_dif [AU] = %f' % (mars_f_dif / c.au_to_km))
+        print('mars_f_dif [r_soi_mars] = %f' % (mars_f_dif / c.r_soi_mars))
+
+        # Compute final spacecraft orbit
         v3_vec = traj2[3:, -1] + dv2_vec
         state3 = np.hstack((traj2[:3, -1], v3_vec))
         tof23 = period_from_inertial(state3, gm, max_time_sec=tf)
-        traj3 = tbp.prop(list(state3 / state_scales), [0., tof23 / tu], [], 6, 2, 0, tol, tol, tof23 / n_steps / tu,
-                         step_type, 3)
+        traj3 = tbp.prop(list(state3 / state_scales), [0., tof23 / tu], [], 6, 2, 0, tol, tol,
+                         tof23 / n_steps / tu - 1e-10, step_type, 3)
         traj3 = (np.array(traj3)[:, 1:] * state_scales).T
 
-        time = (tof12 + t0 * c.sec_to_day) * c.day_to_jc
-        state_f = c.ephem(['a', 'e', 'i', 'w', 'O', 'M'], ['mars'], np.array([time]))
-        state_f = keplerian_to_inertial_3d(state_f, gm, 'mean')
-        state_f[[2, 5]] = 0.
-        tof34 = period_from_inertial(state_f, gm, max_time_sec=tf)
-        traj4 = tbp.prop(list(state_f / state_scales), [0., tof34 / tu], [], 6, 2, 0, tol, tol, tof34 / n_steps / tu,
-                         step_type, 3)
+        # Propagate Mars orbit
+        mars_0 = c.ephem(['a', 'e', 'i', 'w', 'O', 'M'], ['mars'], np.array([t0 * c.sec_to_day * c.day_to_jc]))
+        mars_0[2] = 0.
+        mars_0 = keplerian_to_inertial_3d(mars_0, gm, 'mean')
+        tof34 = period_from_inertial(mars_0, gm, max_time_sec=tf)
+        traj4 = tbp.prop(list(mars_0 / state_scales), [0., tof34 / tu], [], 6, 2, 0, tol, tol,
+                         tof34 / n_steps / tu - 1e-10, step_type, 3)
         traj4 = (np.array(traj4)[:, 1:] * state_scales).T
 
-        # Get state of Mars at initial point of transfer
-        state_0 = c.ephem(['a', 'e', 'i', 'w', 'O', 'M'], ['mars'], np.array([t0 * c.sec_to_day * c.day_to_jc]))
-        state_0 = keplerian_to_inertial_3d(state_0, gm, 'mean')
-        state_0[[2, 5]] = 0.
-
-        # Plot transfer
+        # Plot orbits
         import matplotlib.pyplot as plt
         fig, ax = plt.subplots()
-        # circ = plt.Circle((0, 0), c.r_mars_km, color='red')
-        # ax.add_artist(circ)
         plt.plot(traj1[0], traj1[1], label='S/C init orbit')
-        plt.scatter(state_0[0], state_0[1], s=40, facecolors='none', edgecolors='r', zorder=9, label='Mars init')
-        # plt.gca().set_prop_cycle(None)
-        # plt.plot(traj11[0], traj11[1], '--')
+        plt.scatter(mars_0[0], mars_0[1], s=40, facecolors='none', edgecolors='r', zorder=9, label='Mars init')
         plt.scatter(traj1[0, 0], traj1[1, 0], zorder=9, label='S/C at t=0')
         plt.plot(traj2[0], traj2[1], label='Transfer')
-        plt.scatter(traj2[0, -1], traj2[1, -1], s=40, facecolors='r', edgecolors='r', zorder=9, label='Mars final')
-        plt.plot(traj3[0], traj3[1])
+        plt.scatter(traj2[0, -1], traj2[1, -1], s=40, facecolors='r', edgecolors='r', zorder=9, label='S/C final')
+        plt.scatter(mars_f[0], mars_f[1], s=40, facecolors='r', edgecolors='g', zorder=9, label='Mars final')
+        plt.plot(traj3[0], traj3[1], label='S/C final orbit')
         plt.plot(traj4[0], traj4[1], label='Mars orbit')
         ax.axis('equal')
         x, y = traj1[0, -1], traj1[1, -1]
         plt.quiver(x, y, dv1_vec[0], dv1_vec[1], zorder=8)
         x, y = traj2[0, -1], traj2[1, -1]
         plt.quiver(x, y, dv2_vec[0], dv2_vec[1], zorder=8)
-        plt.legend()
+        plt.legend(loc='center')
         plt.title('Transfer = %.1f days' % tof12)
-        plt.show()
+        # plt.show()
 
-    test12 = True  # Plot a sample trajectory to test tolerances
+    test12 = False  # Plot a sample trajectory to test tolerances
     if test12:
         state_0 = np.array([100000, 0, 0, 0, 2, 0], float)
         gm = c.u_earth_km3s2
