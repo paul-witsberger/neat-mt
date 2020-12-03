@@ -11,7 +11,7 @@ import constants as c
 import traj_config as tc
 from missed_thrust import integrate_func_missed_thrust, traj_fit_func, compute_bcs
 from plotter import plot_traj_2d, plot_mass_history, plot_thrust_history
-from orbit_util import period_from_inertial, rotate_vnc_to_inertial_3d
+from orbit_util import period_from_inertial, rotate_vnc_to_inertial_3d, mag3
 import boost_tbp
 
 
@@ -32,19 +32,20 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
         nc = Neurocontroller.init_from_neat_net(net, tc.scales_in, tc.scales_out)
         thrust_fcn = nc.get_thrust_vec_neat
     else:
-        nc = Neurocontroller(tc.scales_in, tc.scales_out, tc.n_in, tc.n_hid, tc.n_out)
-        nc.setWeights(xopt)
-        thrust_fcn = nc.getThrustVec
+        # nc = Neurocontroller(tc.scales_in, tc.scales_out, tc.n_in, tc.n_hid, tc.n_out)
+        # nc.setWeights(xopt)
+        # thrust_fcn = nc.getThrustVec
+        raise NotImplementedError('Only NEAT is supported in recreate_traj_from_pkl()')
 
     # Generate a problem
-    # y0, yf = make_new_bcs()
     y0, yf = compute_bcs()
     y0 = np.hstack((y0, tc.m0))
 
     # Create time vector
+    ti = np.empty(config.num_nodes + 2)
     # ti = np.power(np.linspace(0, 1, num_nodes), 3 / 2) * (tf - t0) + t0
-    ti = np.linspace(tc.t0, tc.tf, config.num_nodes)
-    ti = np.append(ti, ti[-1])
+    ti[:-2] = np.linspace(tc.t0, tc.tf, config.num_nodes)
+    ti[-2:] = ti[-3]
     ti /= tc.tu
 
     # Get the period of initial, final and target orbits, then integrate each of the trajectories
@@ -101,10 +102,14 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
                 full_traj[tc.n_steps * thi:tc.n_steps * thi + tc.n_steps, 2] / c.au_to_km, c=thrust_color, zorder=7)
 
     # Plot arrows with heads
-    q_scale = np.max(np.linalg.norm(thrust_vec_body, axis=1)) * 20
-    ax.quiver(y[:-2, 0] / c.au_to_km, y[:-2, 1] / c.au_to_km, thrust_vec_inertial[:-2, 0],
-              thrust_vec_inertial[:-2, 1], angles='xy', zorder=8, width=0.0025, units='width', scale=q_scale,
-              scale_units='width', minlength=0.1, headaxislength=3, headlength=6, headwidth=6, color=arrow_color)
+    q_scale_thrust = np.max(np.linalg.norm(thrust_vec_body, axis=1)) * 20
+    q_scale_capture = max(mag3(dv1), mag3(dv2)) / 10
+    quiver_opts = {'angles': 'xy', 'zorder': 8, 'width': 0.0025, 'units': 'width', 'scale_units': 'width',
+                   'minlength': 0.1, 'headaxislength': 3, 'headlength': 6, 'headwidth': 6, 'color': arrow_color}
+    ax.quiver(y[:-2, 0] / c.au_to_km, y[:-2, 1] / c.au_to_km, thrust_vec_inertial[:-2, 0], thrust_vec_inertial[:-2, 1],
+              scale=q_scale_thrust, **quiver_opts)
+    ax.quiver(y[-2:, 0] / c.au_to_km, y[-2:, 1] / c.au_to_km, thrust_vec_inertial[-2:, 0], thrust_vec_inertial[-2:, 1],
+              scale=q_scale_capture, **quiver_opts)
 
     # Plot arrows without heads
     # q_scale = np.max(np.linalg.norm(thrust_vec_body, axis=1)) * 20
@@ -115,7 +120,6 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
     #           thrust_vec_inertial[:-2, 1], **quiver_opts)
     # ax.quiver(y[-2:, 0] / c.au_to_km, y[-2:, 1] / c.au_to_km, thrust_vec_inertial[-2:, 0] * tc.T_max_kN * 20,
     #           thrust_vec_inertial[-2:, 1] * tc.T_max_kN * 20, **quiver_opts)
-    # TODO make sure the above two lines are doing what they are supposed to
 
     # Plot the target orbit - also, save the figure since this is the last element of the plot
     plot_traj_2d(ytarg, False, True, fig_ax=(fig, ax), label='Target', end=True, show_legend=False,
@@ -139,7 +143,6 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
     # Remove Lambert arc delta V from final NN-controlled state for fitness calculation
     yf_actual = y[-2, tc.ind_dim]
     yf_actual[tc.n_dim:] -= dv1[:tc.n_dim]
-    # yf_actual = y[-1, tc.ind_dim]
 
     # TODO figure out why the fitness is so crazy when terminal Lambert arc is performed or not
     #      ----> switching the first delta v with the frame change made it mostly better - but why is the final plot so

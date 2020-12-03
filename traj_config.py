@@ -151,7 +151,7 @@ vallado_rtol = 1e-14  # Tolerance for vallado() convergence
 vallado_numiter = 50  # Number of iterations allowed in vallado()
 capture_short = True
 if capture_short:
-    capture_time_low = 10  # minimum time of Lambert arc, days
+    capture_time_low = 1  # minimum time of Lambert arc, days
     capture_time_high = 60  # maximum time of Lambert arc, days
 else:
     capture_time_low = 300  # minimum time of Lambert arc, days
@@ -168,7 +168,7 @@ ordinal_to_julian = 1721424.5
 t0 = datetime.strptime(t0_str, fmt).toordinal() + ordinal_to_julian
 tf = datetime.strptime(tf_str, fmt).toordinal() + ordinal_to_julian
 times = np.linspace(t0, tf, num_nodes)
-times_jd1950_jc = (times - c.reference_date_jd1950) / 36525
+times_jd1950_jc = (times - c.reference_date_jd1950) * c.day_to_jc
 tf = (tf - t0) * c.day_to_sec
 t0 = 0
 

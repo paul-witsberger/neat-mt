@@ -5,15 +5,15 @@
 [NEAT]
 fitness_criterion      = mean
 fitness_threshold      = 0
-pop_size               = 800
-reset_on_extinction    = 1
+pop_size               = 50
+reset_on_extinction    = 0
 fitness_plot_frequency = 15
 num_nodes = 40
 num_cases = 1
 do_terminal_lambert_arc  = True
 missed_thrust_allowed    = False
-missed_thrust_tbe_factor = 1.
-missed_thrust_rd_factor  = 1.
+missed_thrust_tbe_factor = 1.0
+missed_thrust_rd_factor  = 1.0
 
 [DefaultGenome]
 num_inputs              = 12
@@ -74,7 +74,7 @@ compatibility_threshold = 2.9
 
 [DefaultStagnation]
 species_fitness_func = max
-max_stagnation = 25
+max_stagnation = 20
 
 [DefaultReproduction]
 elitism            = 2

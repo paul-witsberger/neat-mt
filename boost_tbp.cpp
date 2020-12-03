@@ -578,7 +578,7 @@ struct maneuvers {
 		// lambertbattin
 		if (printToFile)
 			outfile = fopen(fname.c_str(), "w");
-		astIOD::lambertbattin(_r1, _r2, v1Battin, dm, df, nrev, dtsec, v1, v2, error, outfile, printToFile);
+		astIOD::lambertbattin(_r1, _r2, gm, v1Battin, dm, df, nrev, dtsec, v1, v2, error, outfile, printToFile);
 		if (printToFile)
 			fclose(outfile);
 

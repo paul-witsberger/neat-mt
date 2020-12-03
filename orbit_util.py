@@ -666,7 +666,7 @@ def vallado(k: float, r0: np.ndarray, r: np.ndarray, tof: float, short: bool, nu
         # raise RuntimeError("Maximum number of iterations reached")
         # warnings.warn('Maximum number of iterations reached in vallado')
         pass
-    print('count = %i | tof = %.4f' % (count, tof / 86400))
+    # print('count = %i | tof = %.4f' % (count, tof / 86400))
 
     f = 1 - y / norm_r0
     g = A * (y / k) ** 0.5
@@ -712,6 +712,7 @@ def find_min(f, low: float, high: float, num_iter: int = 10):
     min_x, min_y = coords[0, np.argmin(coords[1])], min(coords[1])
     return min_x, min_y
 
+
 import boost_tbp
 lambert = boost_tbp.maneuvers().lambert
 def _dv_from_tof(tof, t0, targ_planet, gm, r0, v0, short, numiter, rtol):
@@ -752,17 +753,17 @@ def lambert_min_dv(gm: float, state_0: np.ndarray, t0: float, low: float, high: 
     r0, v0 = state_0[:3], state_0[3:6]
 
     # Fill in all inputs except TOF
-    t0_jc = t0 * c.sec_to_day * c.day_to_jc
-
+    t0_jc = tc.times_jd1950_jc[-1]
     def f_short(tof):
         return _dv_from_tof(tof, t0_jc, targ_planet, gm, r0, v0, True, tc.vallado_numiter, tc.vallado_rtol)
+
     # def f_long(tof):
     #     return _dv_from_tof(tof, t0_jc, targ_planet, gm, r0, v0, False, tc.vallado_numiter, tc.vallado_rtol)
 
     # Find minimum dv TOF
     tof_of_min_dv_s, min_dv_s = find_min(f_short, low, high, num_iter=max_count)
     # tof_of_min_dv_l, min_dv_l = find_min(f_long, low, high, num_iter=max_count)
-    print('TOF short = %f\t|\tmin_dv_s = %e' % (tof_of_min_dv_s, min_dv_s))
+    # print('TOF short = %f\t|\tmin_dv_s = %e' % (tof_of_min_dv_s, min_dv_s))
     # print('TOF long = %f\t|\tmin_dv_l = %e\n' % (tof_of_min_dv_l, min_dv_l))
 
     # if min_dv_s < min_dv_l:
@@ -777,11 +778,10 @@ def lambert_min_dv(gm: float, state_0: np.ndarray, t0: float, low: float, high: 
     state_f = c.ephem(['a', 'e', 'i', 'w', 'O', 'M'], [targ_planet], np.array([tf_jc]))
     state_f[2] = 0.
     state_f = keplerian_to_inertial_3d(state_f, gm, 'mean')
-    sol = vallado(gm, r0, state_f[:3], tof_of_min_dv * c.day_to_sec, short, tc.vallado_numiter, tc.vallado_rtol)
-    # dv1 = sol[0] - v0
-    # dv2 = state_f[3:6] - sol[1]
-    # return dv1, dv2, tof_of_min_dv
-    return sol, tof_of_min_dv
+    sol = lambert(float(gm), r0.tolist(), state_f[:3].tolist(), float(tof_of_min_dv * c.day_to_sec), short)
+    dv1 = sol[0] - v0
+    dv2 = state_f[3:6] - sol[1]
+    return dv1, dv2, tof_of_min_dv
 
 
 def _lambert_min_dv(k: float, state_0: np.ndarray, target_planet: str = 'mars', short: bool = True,
@@ -1461,11 +1461,11 @@ def get_capture_final_values(maneuvers: list, m0: float) -> (float, float):
     :param m0:
     :return:
     """
-    maneuvers, *args = maneuvers
-    if len(args) == 2 or len(args) == 4:
-        maneuvers = [maneuvers, *args]
-    elif len(args) != 1:
-        raise ValueError('Unknown or unprepared outputs from capture function.')
+    # maneuvers, *args = maneuvers
+    # if len(args) == 2 or len(args) == 4:
+    #     maneuvers = [maneuvers, *args]
+    # elif len(args) != 1:
+    #     raise ValueError('Unknown or unprepared outputs from capture function.')
 
     if len(maneuvers) == 3:
         dv1_vec, dv2_vec, tof12 = maneuvers
@@ -1515,6 +1515,7 @@ def propagate_capture(maneuvers: list, state_0: np.ndarray, m0: float, du: float
         dv1_vec, dv2_vec, dv3_vec, tof12, tof23 = maneuvers
         dv1_mag, dv2_mag, dv3_mag = mag3(dv1_vec), mag3(dv2_vec), mag3(dv3_vec)
         n_maneuvers = 3
+    tof12 *= c.day_to_sec
     y = np.empty((n_maneuvers, 7))
     full_traj = np.empty(((n_maneuvers - 1) * tc.n_terminal_steps + 1, 8))
     # ti = np.empty(n_maneuvers + 1)
@@ -1524,8 +1525,6 @@ def propagate_capture(maneuvers: list, state_0: np.ndarray, m0: float, du: float
     m2 = m1 / np.exp(dv2_mag * 1000 / c.g0_ms2 / tc.isp_chemical)
     m3 = m2 / np.exp(dv3_mag * 1000 / c.g0_ms2 / tc.isp_chemical)
 
-    tu = (du ** 3 / gm) ** 0.5
-    state_scales = np.array([du, du, du, du / tu, du / tu, du / tu])
     step_type, eom_type = 0, 3  # fixed step, TBP only
 
     state_1, state_2, state_3 = np.empty((3, 6))
@@ -1540,29 +1539,29 @@ def propagate_capture(maneuvers: list, state_0: np.ndarray, m0: float, du: float
 
     # Transfer from initial location to 2nd maneuver location
     state_1[:3], state_1[3:6] = state_0[:3], state_0[3:6] + dv1_vec
-    traj12 = tbp.prop(list(state_1 / state_scales), [0., tof12 / tu], [], 6, 2, 0, tc.rtol, tc.atol,
-                      tof12 / (tc.n_terminal_steps - 1) / tu, step_type, eom_type)
-    # traj12 = (np.array(traj12)[:, 1:] * state_scales).T
+    traj12 = tbp.prop(list(state_1 / tc.state_scales[:-1]), [0., tof12 / tc.tu], [], 6, 2, 0, tc.rtol, tc.atol,
+                      tof12 / (tc.n_terminal_steps - 1) / tc.tu, step_type, eom_type)
     traj12 = np.array(traj12)
 
     # Compute state after 2nd maneuver
-    state_2[:3], state_2[3:6] = traj12[-1, 1:4] * state_scales[:3], traj12[-1, 4:7] * state_scales[3:6] + dv2_vec
+    state_2[:3], state_2[3:6] = traj12[-1, 1:4] * tc.state_scales[:3], traj12[-1, 4:7] * tc.state_scales[3:6] + dv2_vec
 
     # Compute propagate until 3rd maneuver if necessary, and save states
     if n_maneuvers == 3:
-        traj23 = tbp.prop(list(state_2 / state_scales), [0., tof23 / tu], [], 6, 2, 0, tc.rtol, tc.atol,
-                          tof23 / (tc.n_terminal_steps - 1) / tu, step_type, eom_type)
-        # traj23 = (np.array(traj23)[:, 1:] * state_scales).T
+        traj23 = tbp.prop(list(state_2 / tc.state_scales[:-1]), [0., tof23 / tc.tu], [], 6, 2, 0, tc.rtol, tc.atol,
+                          tof23 / (tc.n_terminal_steps - 1) / tc.tu, step_type, eom_type)
         traj23 = np.array(traj23)
-        traj23[:, 0] += tof12 / tu
+        traj23[:, 0] += tof12 / tc.tu
 
-        state_3[:3], state_3[3:6] = traj23[-1, 1:4] * state_scales[:3], traj23[-1, 4:7] * state_scales[3:6] + dv3_vec
+        state_3[:3] = traj23[-1, 1:4] * tc.state_scales[:3]
+        state_3[3:6] = traj23[-1, 4:7] * tc.state_scales[3:6] + dv3_vec
         y[:, :-1] = state_1, state_2, state_3
         y[:, -1] = m1, m2, m3
         full_traj[:-1, :-1] = traj12, traj23
         full_traj[:tc.n_terminal_steps, -1] = m1 / tc.mu
         full_traj[tc.n_terminal_steps:-1, -1] = m2 / tc.mu
         full_traj[-1, :-1] = traj23[-1]
+        full_traj[-1, 4:7] += dv3_vec / tc.state_scales[3:6]
         full_traj[-1, -1] = m3 / tc.mu
         # ti[:] = 0, tof12, tof23
 
@@ -1572,6 +1571,7 @@ def propagate_capture(maneuvers: list, state_0: np.ndarray, m0: float, du: float
         full_traj[:-1, :-1] = traj12
         full_traj[:-1, -1] = m1 / tc.mu
         full_traj[-1, :-1] = traj12[-1]
+        full_traj[-1, 4:7] += dv2_vec / tc.state_scales[3:6]
         full_traj[-1, -1] = m2 / tc.mu
         # ti[:] = 0, tof12
 
@@ -2697,11 +2697,6 @@ def _in_current(state_0: np.ndarray, rp_target: float, per_target: float, gm: fl
                 maneuvers = [dv1_vec, dv2_vec, tof12]
 
     return maneuvers
-
-
-# TODO
-def _out_current():
-    pass
 
 
 # TODO

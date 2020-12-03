@@ -98,3 +98,7 @@ if __name__ == '__main__':
 
     t_end = time.time()
     print('\nTotal runtime = %.1f sec' % (t_end - t_start))
+
+# TODO continuing after extinction fails with KeyError
+# TODO sometimes fails with KeyError after stagnation
+# TODO best individual can get passed between species
