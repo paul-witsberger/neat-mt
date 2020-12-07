@@ -11,7 +11,7 @@ import constants as c
 import boost_tbp
 import warnings
 
-
+lambert = boost_tbp.maneuvers().lambert
 tbp = boost_tbp.TBP()
 
 
@@ -713,8 +713,6 @@ def find_min(f, low: float, high: float, num_iter: int = 10):
     return min_x, min_y
 
 
-import boost_tbp
-lambert = boost_tbp.maneuvers().lambert
 def _dv_from_tof(tof, t0, targ_planet, gm, r0, v0, short, numiter, rtol):
     time = tof * c.day_to_jc + t0
     state_f = c.ephem(['a', 'e', 'i', 'w', 'O', 'M'], [targ_planet], np.array([time]))
@@ -723,13 +721,11 @@ def _dv_from_tof(tof, t0, targ_planet, gm, r0, v0, short, numiter, rtol):
     # sol = vallado(gm, r0, state_f[:3], tof * c.day_to_sec, short=short, numiter=numiter, rtol=rtol)
     sol = lambert(float(gm), r0.tolist(), state_f[:3].tolist(), float(tof * c.day_to_sec), short)
     if sol[2] == 0:
-        return mag3(sol[0] - v0) + mag3(state_f[3:6] - sol[1])
+        # return mag3(sol[0] - v0) + mag3(state_f[3:6] - sol[1])
+        return mag3(sol[0] - v0) + hyperbolic_capture_from_infinity(mag3(state_f[3:6] - sol[1]),
+                                     tc.capture_periapsis_radius_km, tc.capture_period_day * c.day_to_sec, tc.gm_target)
     else:
         return np.infty
-    # return mag3(sol[0] - v0) + hyperbolic_capture_from_infinity(mag3(state_f[3:6] - sol[1]),
-    #                                                             tc.capture_periapsis_radius_km,
-    #                                                             tc.capture_period_day * c.day_to_sec,
-    #                                                             tc.gm_target)
 
 
 # TODO Do I really need to find the min dv TOF, or can I just set it to e.g. 60 days and have the network learn around
@@ -754,6 +750,7 @@ def lambert_min_dv(gm: float, state_0: np.ndarray, t0: float, low: float, high: 
 
     # Fill in all inputs except TOF
     t0_jc = tc.times_jd1950_jc[-1]
+
     def f_short(tof):
         return _dv_from_tof(tof, t0_jc, targ_planet, gm, r0, v0, True, tc.vallado_numiter, tc.vallado_rtol)
 
@@ -781,6 +778,8 @@ def lambert_min_dv(gm: float, state_0: np.ndarray, t0: float, low: float, high: 
     sol = lambert(float(gm), r0.tolist(), state_f[:3].tolist(), float(tof_of_min_dv * c.day_to_sec), short)
     dv1 = sol[0] - v0
     dv2 = state_f[3:6] - sol[1]
+    # dv2 = hyperbolic_capture_from_infinity(state_f[3:6] - sol[1], tc.capture_periapsis_radius_km, tc.capture_period_day, gm,
+    #                                        tc.capture_low_not_high)
     return dv1, dv2, tof_of_min_dv
 
 
@@ -2524,7 +2523,7 @@ def _in_current(state_0: np.ndarray, rp_target: float, per_target: float, gm: fl
             dv2_mag = lower_periapsis(rp, a, rp_target, gm)
             dv2_vec, tof12 = _get_maneuver_vector(r0_vec, v0_vec, v0_mag, dv2_mag, gamma0, gm, to_apoapsis=False)
             # Compute velocity at original periapsis after maneuver
-            v2_mag = dv2_mag + (2 * gm / rp - gm / a) ** 0.5
+            v2_mag = dv2_mag + v_from_gm_r_a(gm, rp, a)
             v2_vec = dv2_vec / dv2_mag * v2_mag
             r2_mag = rp
             df = 2 * np.pi - f
@@ -2705,8 +2704,8 @@ def _in_optimal():
 
 
 # TODO treat anything outside of sphere of influence as hyperbolic
-# def _out_optimal(state_0: np.ndarray, rp_target: float, per_target: float, gm_central: float, gm_target: float,
-#                  low_not_high: bool = True):
+def _out_optimal(state_0: np.ndarray, rp_target: float, per_target: float, gm_central: float, gm_target: float,
+                 low_not_high: bool = True):
 #     r_vec, v_vec = state_0[:3], state_0[3:6]
 #     r_mag, v_mag = mag3(r_vec), mag3(v_vec)
 #     # compute transfer to target SOI
@@ -2726,6 +2725,7 @@ def _in_optimal():
 #         a = a_from_gm_per(gm_target, per_target)
 #         vp_capture = v_from_gm_r_a(gm_target, rp_target, a)
 #     dv_mag = vp_hyper - vp_capture
+    pass
 
 
 # TODO the main still-to-be-solved problem is when I am outside the sphere-of-influence and want to get to it. Mars'

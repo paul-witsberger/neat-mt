@@ -10,8 +10,8 @@ from nnet import Neurocontroller
 import constants as c
 import traj_config as tc
 from missed_thrust import integrate_func_missed_thrust, traj_fit_func, compute_bcs
-from plotter import plot_traj_2d, plot_mass_history, plot_thrust_history
-from orbit_util import period_from_inertial, rotate_vnc_to_inertial_3d, mag3
+from plotter import plot_traj_2d, plot_mass_history, plot_thrust_history, final_point, point_size
+from orbit_util import period_from_inertial, rotate_vnc_to_inertial_3d, mag3, keplerian_to_inertial_3d
 import boost_tbp
 
 
@@ -89,21 +89,21 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
 
     # Plot transfer, final, and initial orbits
     fig, ax = plot_traj_2d(yinit, False, False, label='Initial', show_legend=False)
-    fig, ax = plot_traj_2d(full_traj[:, 1:4].T, False, False, fig_ax=(fig, ax), label='Transfer', start=True, end=True,
-                           show_legend=False)
+    fig, ax = plot_traj_2d(full_traj[:, 1:4].T, False, False, fig_ax=(fig, ax), label='Transfer', start=True,
+                           end=False, show_legend=False)
     fig, ax = plot_traj_2d(yfinal, False, False, fig_ax=(fig, ax), label='Final', show_legend=False)
 
     # Add colors to the missed-thrust and thrusting segments
     for mi in miss_ind:
-        ax.plot(full_traj[tc.n_steps * mi:tc.n_steps * mi + tc.n_steps, 1] / c.au_to_km,
-                full_traj[tc.n_steps * mi:tc.n_steps * mi + tc.n_steps, 2] / c.au_to_km, c=missed_color, zorder=7)
+        ax.plot(full_traj[tc.n_steps * mi:tc.n_steps * (mi + 1), 1] / c.au_to_km,
+                full_traj[tc.n_steps * mi:tc.n_steps * (mi + 1), 2] / c.au_to_km, c=missed_color, zorder=7)
     for thi in thrust_ind:
-        ax.plot(full_traj[tc.n_steps * thi:tc.n_steps * thi + tc.n_steps, 1] / c.au_to_km,
-                full_traj[tc.n_steps * thi:tc.n_steps * thi + tc.n_steps, 2] / c.au_to_km, c=thrust_color, zorder=7)
+        ax.plot(full_traj[tc.n_steps * thi:tc.n_steps * (thi + 1), 1] / c.au_to_km,
+                full_traj[tc.n_steps * thi:tc.n_steps * (thi + 1), 2] / c.au_to_km, c=thrust_color, zorder=7)
 
     # Plot arrows with heads
     q_scale_thrust = np.max(np.linalg.norm(thrust_vec_body, axis=1)) * 20
-    q_scale_capture = max(mag3(dv1), mag3(dv2)) / 10
+    q_scale_capture = max(mag3(dv1), mag3(dv2)) / 5
     quiver_opts = {'angles': 'xy', 'zorder': 8, 'width': 0.0025, 'units': 'width', 'scale_units': 'width',
                    'minlength': 0.1, 'headaxislength': 3, 'headlength': 6, 'headwidth': 6, 'color': arrow_color}
     ax.quiver(y[:-2, 0] / c.au_to_km, y[:-2, 1] / c.au_to_km, thrust_vec_inertial[:-2, 0], thrust_vec_inertial[:-2, 1],
@@ -120,6 +120,15 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
     #           thrust_vec_inertial[:-2, 1], **quiver_opts)
     # ax.quiver(y[-2:, 0] / c.au_to_km, y[-2:, 1] / c.au_to_km, thrust_vec_inertial[-2:, 0] * tc.T_max_kN * 20,
     #           thrust_vec_inertial[-2:, 1] * tc.T_max_kN * 20, **quiver_opts)
+
+    # Plot Mars after the capture
+    tf_jc = (ti[-1] - ti[-3]) * tc.tu * c.sec_to_day * c.day_to_jc + tc.times_jd1950_jc[-1]
+    mars_post_capture = c.ephem(['a', 'e', 'i', 'w', 'O', 'M'], [tc.target_body], np.array([tf_jc]))
+    mars_post_capture[2] = 0.
+    mars_post_capture = keplerian_to_inertial_3d(mars_post_capture, tc.gm, 'mean')[:3] / c.au_to_km
+    ax.scatter(mars_post_capture[0], mars_post_capture[1], edgecolor='red', facecolor='none', s=point_size*1.5)
+    ax.scatter(y[-3, 0] / c.au_to_km, y[-3, 1] / c.au_to_km, edgecolor='none', facecolor=final_point, s=point_size)
+    ax.scatter(y[-1, 0] / c.au_to_km, y[-1, 1] / c.au_to_km, edgecolor=final_point, facecolor='none', s=point_size)
 
     # Plot the target orbit - also, save the figure since this is the last element of the plot
     plot_traj_2d(ytarg, False, True, fig_ax=(fig, ax), label='Target', end=True, show_legend=False,
@@ -149,7 +158,9 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
     #               garbage?
     #      ----> compare states at end of integration with no terminal maneuver case
     # Calculate and print fitness
-    f, dr, dv = traj_fit_func(yf_actual, yf[tc.ind_dim[:-1]], y0, (y0[-1] - y[-1, -1]) / y0[-1], ti[-1] / ti[-2])
+    m_ratio = (y0[-1] - y[-1, -1]) / y0[-1]
+    t_ratio = (ti[-1] - ti[-3]) / ti[-3]
+    f, dr, dv = traj_fit_func(yf_actual, yf[tc.ind_dim[:-1]], y0, m_ratio, t_ratio)
     print('Final fitness = %f\n' % -f)
 
 
@@ -159,6 +170,7 @@ def make_last_traj(print_mass: bool = True, save_traj: bool = True, neat_net: bo
     if neat_net:
         ext = 'default' if config_name is None else config_name
         fname = 'winner_' + ext
+        fname = 'winner_tmp'
     else:
         fname = 'lgen.pkl'
     # Run
@@ -171,7 +183,7 @@ def get_thrust_history(ti: np.ndarray, y: np.ndarray, yf: np.ndarray, thrust_fcn
         -> np.ndarray:
     # Calculate thrust vector at each time step
     thrust_vec = np.zeros((len(ti) - 2, 3), float)
-    for i in range(len(ti) - 2):
+    for i in range(len(ti) - 3):
         # Check if there is any remaining propellant mass
         if y[i, -1] > tc.m_dry + 0.01:
             # Compute mass and time ratios
@@ -200,6 +212,9 @@ def make_neat_network_diagram(config_name=None):
     """
     Creates a network diagram in .svg format showing the nodes and connections.
     """
+    from platform import system as sys
+    if sys() == 'Linux':
+        return
     # Load network
     ext = 'tmp' if config_name is None else config_name
     with open('results//winner_' + ext, 'rb') as f:

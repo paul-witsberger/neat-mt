@@ -46,7 +46,7 @@ def run(config_name='default', init_state=None, parallel=True, max_gens=traj_con
     # Make plots
     visualize.plot_stats(stats, ylog=True, filename="results//fitness_history_" + config_name + ".svg")
     visualize.plot_species(stats, filename="results//speciation_history_" + config_name + ".svg")
-    # make_neat_network_diagram(config_name=config_name)
+    make_neat_network_diagram(config_name=config_name)
     make_last_traj(print_mass=True, config_name=config_name)
 
     return pop
@@ -67,6 +67,7 @@ if __name__ == '__main__':
     _get_timing = False
     _parallel = True
     _max_gens = [100, 50, 20]
+    pop = None
 
     t_start = time.time()
     if _get_timing:
@@ -75,26 +76,29 @@ if __name__ == '__main__':
 
     else:
         # Step 1 of 3: run with a coarse distribution of nodes to get general steering law
-        coarse_str = 'coarse'
-        pop = run(config_name=coarse_str,
-                  parallel=_parallel,
-                  max_gens=_max_gens[0])
+        if _max_gens[0] > 0:
+            coarse_str = 'coarse'
+            pop = run(config_name=coarse_str,
+                      parallel=_parallel,
+                      max_gens=_max_gens[0])
 
         # Step 2 of 3: run with a finer distribution of nodes and some missed thrust to reasonably close solution
-        intermediate_str = 'intermediate'
-        intermediate_state_1 = prepare_population(pop)
-        pop = run(config_name=intermediate_str,
-                  init_state=intermediate_state_1,
-                  parallel=_parallel,
-                  max_gens=_max_gens[1])
+        if _max_gens[1] > 0:
+            intermediate_str = 'intermediate'
+            intermediate_state_1 = prepare_population(pop) if pop is not None else None
+            pop = run(config_name=intermediate_str,
+                      init_state=intermediate_state_1,
+                      parallel=_parallel,
+                      max_gens=_max_gens[1])
 
         # Step 3 of 3: run with little mutation and many cases of missed thrust to perform RBDO
-        final_str = 'final'
-        intermediate_state_2 = prepare_population(pop)
-        run(config_name=final_str,
-            init_state=intermediate_state_2,
-            parallel=_parallel,
-            max_gens=_max_gens[2])
+        if _max_gens[2] > 0:
+            final_str = 'final'
+            intermediate_state_2 = prepare_population(pop) if pop is not None else None
+            run(config_name=final_str,
+                init_state=intermediate_state_2,
+                parallel=_parallel,
+                max_gens=_max_gens[2])
 
     t_end = time.time()
     print('\nTotal runtime = %.1f sec' % (t_end - t_start))

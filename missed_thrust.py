@@ -110,44 +110,6 @@ def eval_traj_neat(genome: neat.genome.DefaultGenome, config: neat.config.Config
     return -f
 
 
-# DEPRECATED
-def make_new_bcs(true_final_f: bool = tc.true_final_f) -> (np.ndarray, np.ndarray):
-    while True:
-        a0 = np.random.rand() * (tc.a0_max - tc.a0_min) + tc.a0_min
-        af = np.random.rand() * (tc.af_max - tc.af_min) + tc.af_min
-        if np.abs((af - a0) / min(af, a0)) > 0.1:
-            break
-    e0 = np.random.rand() * (tc.e0_max - tc.e0_min) + tc.e0_min
-    ef = np.random.rand() * (tc.ef_max - tc.ef_min) + tc.ef_min
-    w0 = np.random.rand() * (tc.w0_max - tc.w0_min) + tc.w0_min
-    wf = np.random.rand() * (tc.wf_max - tc.wf_min) + tc.wf_min
-    f0 = np.random.rand() * (tc.f0_max - tc.f0_min) + tc.f0_min
-    if true_final_f:
-        assert tc.f0_ref is not None and tc.ff_ref is not None
-        f_frac = (f0 - tc.f0_min) / (tc.f0_max - tc.f0_min)
-        ff = f_frac * (tc.ff_max - tc.ff_min) + tc.ff_min
-    else:
-        ff = np.random.rand() * (tc.ff_max - tc.ff_min) + tc.ff_min
-    
-    if tc.n_dim == 2:
-        y0 = ou.keplerian_to_inertial_2d(np.array([a0, e0, w0, f0]), gm=tc.gm)
-        yf = ou.keplerian_to_inertial_2d(np.array([af, ef, wf, ff]), gm=tc.gm)
-        y0 = np.insert(y0, 2, 0.)
-        y0 = np.insert(y0, 5, 0.)
-        yf = np.insert(yf, 2, 0.)
-        yf = np.insert(yf, 5, 0.)
-    else:
-        i0 = np.random.rand() * (tc.i0_max - tc.i0_min) + tc.i0_min
-        ifinal = np.random.rand() * (tc.if_max - tc.if_min) + tc.if_min
-        om0 = np.random.rand() * (tc.om0_max - tc.om0_min) + tc.om0_min
-        omf = np.random.rand() * (tc.omf_max - tc.omf_min) + tc.omf_min
-        y0 = ou.keplerian_to_inertial_3d(np.array([a0, e0, i0, w0, om0, f0]), gm=tc.gm)
-        yf = ou.keplerian_to_inertial_3d(np.array([af, ef, ifinal, wf, omf, ff]), gm=tc.gm)
-    y0 = np.append(y0, tc.m0)
-    yf = yf.ravel()
-    return y0, yf
-
-
 def compute_bcs() -> (np.ndarray, np.ndarray):
     """
     Computes the locations of the initial and target bodies at the initial and final times in Cartesian coordinates.
@@ -163,56 +125,6 @@ def compute_bcs() -> (np.ndarray, np.ndarray):
     state_0_i = ou.keplerian_to_inertial_3d(states_coe[:, 0, 0], mean_or_true='mean')
     state_f_i = ou.keplerian_to_inertial_3d(states_coe[:, 1, 1], mean_or_true='mean')
     return state_0_i, state_f_i
-
-
-# DEPRECATED
-"""
-def eval_traj_ga(weights: np.ndarray, params: list) -> float:
-    # Evaluates a NN that was trained with a genetic algorithm.
-    # :param weights:
-    # :param params:
-    # :return:
-    raise NotImplementedError()
-    # # Extract parameters
-    # n_in, n_hid, n_out, scales_in, scales_out, t0, tf, y0, yf, m_dry, T_max_kN, tol, num_nodes, num_cases,
-    # num_outages = params
-    # # Construct NN
-    # nc = Neurocontroller(scales_in, scales_out, n_in, n_hid, n_out)
-    # nc.setWeights(W)
-    # thrust_fcn = nc.getThrustVec
-    # # Define time vector
-    # # ti = np.linspace(t0, tf, num_nodes)
-    # ti = np.power(np.linspace(0, 1, num_nodes), 3 / 2) * (tf - t0) + t0
-    # # Define scaling parameters
-    # du = 6371.0
-    # tu = np.sqrt(du**3 / gm)
-    # mu = y0[-1]
-    # fu = mu * du / tu / tu
-    # # Initialize score vector
-    # f = np.ones(num_cases) * np.inf
-    # for i in range(num_cases):
-    #     # Integrate trajectory
-    #     y, miss_ind = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, m_dry, T_max_kN, du, tu, mu, fu)
-    #     # Check if integration was stopped early
-    #     if len(y.shape) == 0:
-    #         if y == -1:
-    #             return 1000
-    #         else:
-    #             frac = y / len(ti)
-    #             return (1 - frac) * 500 + 500
-    #     # Create logical list for indices of 2D components
-    #     # ind_2d = [True, True, False, True, True, False, False]
-    #     # Get final state
-    #     yf_actual = y[-1, ind_dim]
-    #     yf_target = yf[ind_dim[:-1]]
-    #     # Calculate ratio of initial mass to final mass
-    #     m_ratio = y0[-1] / y[-1, -1]
-    #     f[i] = traj_fit_func(yf_actual, yf_target, m_ratio)
-    # f = np.mean(f)
-    # if f < 10:
-    #     blah = 0
-    # return f
-"""
 
 
 # @njit
@@ -280,12 +192,12 @@ def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float,
     f = 0.
     for i in range(4):
         f += max(squares[i], abses[i])
-    f += m_ratio * mass_weight + (t_ratio - 1) * time_weight + penalty[0]
+    f += m_ratio * mass_weight + t_ratio * time_weight + penalty[0]
 
     # Penalize going too close to central body
     if tc.rp_penalty:
-        if rp1 < tc.min_allowed_rp:
-            f += tc.rp_penalty_multiplier * (1 - rp1 / tc.min_allowed_rp)
+        # if rp1 < tc.min_allowed_rp:
+        f += tc.rp_penalty_multiplier * max((1 - rp1 / tc.min_allowed_rp), 0)
 
     # Penalize for not leaving initial orbit
     if tc.no_thrust_penalty:
@@ -298,11 +210,23 @@ def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float,
     dr *= tc.a0_max
     dv *= yf_mag
 
+    if np.isnan(f):
+        print('\n\n' + '*' * 50)
+        print('FITNESS IS NAN')
+        print('y = ')
+        print(y)
+        print('yf = ')
+        print(yf)
+        print('y0 = ')
+        print(y0)
+        print('m_ratio = ')
+        print(m_ratio)
+        print('t_ratio = ')
+        print(t_ratio)
+        print('*' * 50 + '\n\n')
     return f, dr, dv
 
 
-# TODO go back and look into redoing how time vector is saved - could probably adjust it to account for updated
-#      maneuver calculations
 def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat, y0: np.ndarray, ti: np.ndarray,
                                  yf: np.ndarray, config: neat.config.Config, save_full_traj: bool = False,
                                  fixed_step: bool = tc.fixed_step) -> \
@@ -421,10 +345,10 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
             change_frame = False
         else:
             print('Performing close capture')
-            # dv1, dv2, tof = ou.min_dv_capture(y[-2, :6], yf, c.u_mars_km3s2, tc.capture_periapsis_radius_km)
-            rp_target = c.r_mars_km + tc.capture_periapsis_alt_km
-            maneuvers = ou.capture(state_rel, rp_target, tc.capture_period_day, tc.gm, c.r_soi_mars,
-                                   tc.capture_low_not_high, tc.capture_current_not_optimal)
+            # maneuvers = ou.capture(state_rel, tc.capture_periapsis_radius_km, tc.capture_period_day, tc.gm_target,
+            #                        c.r_soi_mars, tc.capture_low_not_high, tc.capture_current_not_optimal)
+            maneuvers = ou._in_current(state_rel, tc.capture_periapsis_radius_km, tc.capture_period_day * c.day_to_sec,
+                                       tc.gm_target, tc.capture_low_not_high)
             state_f = state_rel
             gm_capture = tc.gm_target
             change_frame = True
@@ -461,6 +385,23 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
 
         else:
             tof_capture, mf = ou.get_capture_final_values(maneuvers, mf)
+            if np.isnan(mf):
+                print('\n\n' + '*' * 50)
+                print('FINAL MASS IS NAN')
+                if change_frame:
+                    print('capture type = close')
+                    print('other inputs = ')
+                    print([tc.capture_periapsis_radius_km, tc.capture_period_day * c.day_to_sec,
+                                       tc.gm_target, tc.capture_low_not_high])
+                else:
+                    print('capture type = far')
+                    print('other inputs = ')
+                    print([tc.gm, ti[-3] * tc.tu, tc.capture_time_low, tc.capture_time_high, 10, tc.capture_short])
+                print('state_f = ')
+                print(state_f)
+                print('maneuvers = ')
+                print(maneuvers)
+                print('*' * 50 + '\n\n')
             maneuvers = tof_capture, mf
             y[-1, -1] = mf
 
@@ -632,6 +573,15 @@ if __name__ == '__main__':
         bc0, bcf = compute_bcs()
         print(bc0)
         print(bcf)
+
+    test3 = True
+    if test3:
+        y = np.array([1.99306704e+08, -7.70086431e+07, 0, 9.75850417e+00, 2.36332437e+01, 0])
+        yf = np.array([1.89499860e+08, -8.24217667e+07, 0, 1.06066182e+01, 2.42838341e+01, 0])
+        y0 = np.array([1.49805074e+08, 7.10550646e+06, 0, -1.89741489e+00, 2.96493549e+01, 00])
+        m_ratio = 0.7004071117860589
+        t_ratio = 0.06
+        print(traj_fit_func(y, yf, y0, m_ratio, t_ratio))
 
 
 # TODO look into rendezvous with a moving target - e.g. Gateway, hyperbolic rendezvous,

@@ -5,13 +5,13 @@
 [NEAT]
 fitness_criterion      = mean
 fitness_threshold      = 0
-pop_size               = 50
+pop_size               = 1000
 reset_on_extinction    = 0
 fitness_plot_frequency = 15
 num_nodes = 40
-num_cases = 1
+num_cases = 5
 do_terminal_lambert_arc  = True
-missed_thrust_allowed    = False
+missed_thrust_allowed    = True
 missed_thrust_tbe_factor = 1.0
 missed_thrust_rd_factor  = 1.0
 
