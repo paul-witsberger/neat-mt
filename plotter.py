@@ -206,7 +206,8 @@ def plot_mass_history(t: np.ndarray, m: np.ndarray, show_plot: bool = False, sav
     ax.plot(t, m)
     if is_outage is not None:
         for i, is_out in enumerate(is_outage):
-            ax.scatter(t[i], m[i], c='m', s=10)
+            if is_out:
+                ax.scatter(t[i], m[i], c='m', s=10)
     ax.set_title('Mass History')
     ax.set_xlabel('Time (day)')
     ax.set_ylabel('Mass (kg)')
