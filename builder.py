@@ -42,11 +42,11 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
     y0 = np.hstack((y0, tc.m0))
 
     # Create time vector
-    ti = np.empty(config.num_nodes + 2)
-    # ti = np.power(np.linspace(0, 1, num_nodes), 3 / 2) * (tf - t0) + t0
-    ti[:-2] = np.linspace(tc.t0, tc.tf, config.num_nodes)
-    ti[-2:] = ti[-3]
-    ti /= tc.tu
+    # ti = np.empty(config.num_nodes + 2)
+    # # ti = np.power(np.linspace(0, 1, num_nodes), 3 / 2) * (tf - t0) + t0
+    # ti[:-2] = np.linspace(tc.t0, tc.tf, config.num_nodes)
+    # ti[-2:] = ti[-3]
+    # ti /= tc.tu
 
     # Get the period of initial, final and target orbits, then integrate each of the trajectories
     tbp = boost_tbp.TBP()
@@ -56,8 +56,7 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
     yinit = tbp.prop(list(y0[tc.ind_dim] / tc.state_scales[:-1]), [tc.t0 / tc.tu, yinit_tf / tc.tu], [], 6, 2, 0,
                      tc.rtol, tc.atol, (yinit_tf - tc.t0) / (tc.n_terminal_steps + 1) / tc.tu, step_type, eom_type)
     yinit = (np.array(yinit)[:, 1:] * tc.state_scales[:-1]).T
-    y, miss_ind, full_traj, maneuvers = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, config,
-                                                                     save_full_traj=True, fixed_step=True)
+    y, times, is_outage, full_traj, maneuvers = integrate_func_missed_thrust(thrust_fcn, y0, yf, config, True, True)
     yfinal_tf = period_from_inertial(y[-1, :-1], gm=tc.gm, max_time_sec=tc.max_final_time)
     yfinal = tbp.prop(list(y[-1, tc.ind_dim] / tc.state_scales[:-1]), [tc.t0 / tc.tu, yfinal_tf / tc.tu], [], 6, 2, 0,
                       tc.rtol, tc.atol, (yfinal_tf - tc.t0) / (tc.n_terminal_steps + 1) / tc.tu, step_type, eom_type)
@@ -67,8 +66,8 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
     ytarg = (np.array(ytarg)[:, 1:] * tc.state_scales[:-1]).T
 
     # Calculate thrust vectors throughout transfer trajectory
-    thrust_vec_body = get_thrust_history(ti, y, yf, thrust_fcn)[:, :tc.n_dim]
-    thrust_vec_body[miss_ind] = 0.
+    thrust_vec_body = get_thrust_history(times, y, yf, thrust_fcn)[:, :tc.n_dim]
+    thrust_vec_body[is_outage] = 0.
     if tc.n_dim == 2:
         thrust_vec_inertial = rotate_thrust(thrust_vec_body, y)
     else:
@@ -94,35 +93,30 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
     fig, ax = plot_traj_2d(yfinal, False, False, fig_ax=(fig, ax), label='Final', show_legend=False)
 
     # Add colors to the missed-thrust and thrusting segments
-    for mi in miss_ind:
-        ax.plot(full_traj[tc.n_steps * mi:tc.n_steps * (mi + 1), 1] / c.au_to_km,
-                full_traj[tc.n_steps * mi:tc.n_steps * (mi + 1), 2] / c.au_to_km, c=missed_color, zorder=7)
+    for i_out, is_out in enumerate(is_outage):
+        if is_out:
+            ax.plot(full_traj[tc.n_steps * i_out:tc.n_steps * (i_out + 1), 1] / c.au_to_km,
+                    full_traj[tc.n_steps * i_out:tc.n_steps * (i_out + 1), 2] / c.au_to_km, c=missed_color, zorder=7)
     for thi in thrust_ind:
         ax.plot(full_traj[tc.n_steps * thi:tc.n_steps * (thi + 1), 1] / c.au_to_km,
                 full_traj[tc.n_steps * thi:tc.n_steps * (thi + 1), 2] / c.au_to_km, c=thrust_color, zorder=7)
 
-    # Plot arrows with heads
+    # Plot thrust vectors
     q_scale_thrust = np.max(np.linalg.norm(thrust_vec_body, axis=1)) * 20
     q_scale_capture = max(mag3(dv1), mag3(dv2)) / 5
-    quiver_opts = {'angles': 'xy', 'zorder': 8, 'width': 0.0025, 'units': 'width', 'scale_units': 'width',
-                   'minlength': 0.1, 'headaxislength': 3, 'headlength': 6, 'headwidth': 6, 'color': arrow_color}
-    ax.quiver(y[:-2, 0] / c.au_to_km, y[:-2, 1] / c.au_to_km, thrust_vec_inertial[:-2, 0], thrust_vec_inertial[:-2, 1],
+    if tc.arrows_with_heads:
+        quiver_opts = {'angles': 'xy', 'zorder': 8, 'width': 0.0025, 'units': 'width', 'scale_units': 'width',
+                       'minlength': 0.1, 'headaxislength': 3, 'headlength': 6, 'headwidth': 6, 'color': arrow_color}
+    else:
+        quiver_opts = {'angles': 'xy', 'zorder': 8, 'width': 0.004, 'units': 'width', 'scale_units': 'width',
+                       'minlength': 0.1, 'headaxislength': 0, 'headlength': 0, 'headwidth': 0, 'color': arrow_color}
+    ax.quiver(y[:-3, 0] / c.au_to_km, y[:-3, 1] / c.au_to_km, thrust_vec_inertial[:-2, 0], thrust_vec_inertial[:-2, 1],
               scale=q_scale_thrust, **quiver_opts)
     ax.quiver(y[-2:, 0] / c.au_to_km, y[-2:, 1] / c.au_to_km, thrust_vec_inertial[-2:, 0], thrust_vec_inertial[-2:, 1],
               scale=q_scale_capture, **quiver_opts)
 
-    # Plot arrows without heads
-    # q_scale = np.max(np.linalg.norm(thrust_vec_body, axis=1)) * 20
-    # quiver_opts = {'angles': 'xy', 'zorder': 8, 'width': 0.004, 'units': 'width', 'scale': q_scale,
-    #                'scale_units': 'width', 'minlength': 0.1, 'headaxislength': 0, 'headlength': 0, 'headwidth': 0,
-    #                'color': arrow_color}
-    # ax.quiver(y[:-2, 0] / c.au_to_km, y[:-2, 1] / c.au_to_km, thrust_vec_inertial[:-2, 0],
-    #           thrust_vec_inertial[:-2, 1], **quiver_opts)
-    # ax.quiver(y[-2:, 0] / c.au_to_km, y[-2:, 1] / c.au_to_km, thrust_vec_inertial[-2:, 0] * tc.T_max_kN * 20,
-    #           thrust_vec_inertial[-2:, 1] * tc.T_max_kN * 20, **quiver_opts)
-
     # Plot Mars after the capture
-    tf_jc = (ti[-1] - ti[-3]) * tc.tu * c.sec_to_day * c.day_to_jc + tc.times_jd1950_jc[-1]
+    tf_jc = (times[-1] - times[-3]) * tc.tu * c.sec_to_day * c.day_to_jc + tc.times_jd1950_jc[-1]
     mars_post_capture = c.ephem(['a', 'e', 'i', 'w', 'O', 'M'], [tc.target_body], np.array([tf_jc]))
     mars_post_capture[2] = 0.
     mars_post_capture = keplerian_to_inertial_3d(mars_post_capture, tc.gm, 'mean')[:3] / c.au_to_km
@@ -135,13 +129,13 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
                  config_name=config_name)
 
     # Plot mass and thrust
-    plot_mass_history(ti * tc.tu * c.sec_to_day, y[:, -1], mt_ind=miss_ind, config_name=config_name)
-    plot_thrust_history(ti[:-2] * tc.tu * c.sec_to_day, thrust_vec_body, mt_ind=miss_ind, config_name=config_name)
+    plot_mass_history(times * tc.tu * c.sec_to_day, y[:, -1], is_outage=is_outage, config_name=config_name)
+    plot_thrust_history(times[:-3] * tc.tu * c.sec_to_day, thrust_vec_body, is_outage=is_outage, config_name=config_name)
 
     # Save trajectory to file (states, times, controls)
     if save_traj:
         with h5py.File(os.path.join('results', traj_fname + config_name + '.hdf5'), "w") as f:
-            f.create_dataset('t', data=ti)
+            f.create_dataset('t', data=times)
             f.create_dataset('x', data=y)
             f.create_dataset('u', data=thrust_vec_inertial)
 
@@ -153,13 +147,9 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
     yf_actual = y[-2, tc.ind_dim]
     yf_actual[tc.n_dim:] -= dv1[:tc.n_dim]
 
-    # TODO figure out why the fitness is so crazy when terminal Lambert arc is performed or not
-    #      ----> switching the first delta v with the frame change made it mostly better - but why is the final plot so
-    #               garbage?
-    #      ----> compare states at end of integration with no terminal maneuver case
     # Calculate and print fitness
     m_ratio = (y0[-1] - y[-1, -1]) / y0[-1]
-    t_ratio = (ti[-1] - ti[-3]) / ti[-3]
+    t_ratio = (times[-1] - times[-3]) / times[-3]
     f, dr, dv = traj_fit_func(yf_actual, yf[tc.ind_dim[:-1]], y0, m_ratio, t_ratio)
     print('Final fitness = %f\n' % -f)
 
@@ -182,13 +172,13 @@ def make_last_traj(print_mass: bool = True, save_traj: bool = True, neat_net: bo
 def get_thrust_history(ti: np.ndarray, y: np.ndarray, yf: np.ndarray, thrust_fcn: Neurocontroller.get_thrust_vec_neat)\
         -> np.ndarray:
     # Calculate thrust vector at each time step
-    thrust_vec = np.zeros((len(ti) - 2, 3), float)
+    thrust_vec = np.zeros((len(ti) - 3, 3), float)
     for i in range(len(ti) - 3):
         # Check if there is any remaining propellant mass
         if y[i, -1] > tc.m_dry + 0.01:
             # Compute mass and time ratios
             mass_ratio = (y[i, -1] - tc.m_dry) / (y[0, -1] - tc.m_dry)
-            time_ratio = ti[i] / ti[-2]  # TODO ti[-2] or ti[-1]?
+            time_ratio = ti[i] / ti[-3]
             # Query NN to get thrust vector
             thrust_vec[i, :] = thrust_fcn(
                 np.hstack((y[i, tc.ind_dim], yf[tc.ind_dim[:-1]], mass_ratio, time_ratio))) * tc.T_max_kN

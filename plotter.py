@@ -199,13 +199,14 @@ def plot_traj_2d_struct(yout, show_plot: bool = True, save_plot: bool = False, f
 
 
 def plot_mass_history(t: np.ndarray, m: np.ndarray, show_plot: bool = False, save_plot: bool = True,
-                      fname: str = 'results//mass_hist_', mt_ind: np.ndarray = None, config_name='tmp'):
+                      fname: str = 'results//mass_hist_', is_outage: np.ndarray = None, config_name='tmp'):
     fig = plt.figure()
     ax = fig.add_subplot(111)
     plt.grid(True)
     ax.plot(t, m)
-    if mt_ind is not None:
-        ax.scatter(t[mt_ind], m[mt_ind], c='m', s=10)
+    if is_outage is not None:
+        for i, is_out in enumerate(is_outage):
+            ax.scatter(t[i], m[i], c='m', s=10)
     ax.set_title('Mass History')
     ax.set_xlabel('Time (day)')
     ax.set_ylabel('Mass (kg)')
@@ -218,7 +219,7 @@ def plot_mass_history(t: np.ndarray, m: np.ndarray, show_plot: bool = False, sav
 
 
 def plot_thrust_history(t: np.ndarray, thrust_vec: np.ndarray, show_plot: bool = False, save_plot: bool = True,
-                        fname: str = 'results//thrust_hist_', mt_ind: np.ndarray = None, config_name='tmp'):
+                        fname: str = 'results//thrust_hist_', is_outage: np.ndarray = None, config_name='tmp'):
     fig = plt.figure()
     ax1 = fig.add_subplot(211)
     ax2 = fig.add_subplot(212)
@@ -235,9 +236,11 @@ def plot_thrust_history(t: np.ndarray, thrust_vec: np.ndarray, show_plot: bool =
     ax2.set_title('Thrust Angle')
     ax2.set_xlabel('Time (day)')
     ax2.set_ylabel('Angle (deg)')
-    if mt_ind is not None:
-        ax1.scatter(t[mt_ind], throttle[mt_ind], c='m', s=10)
-        ax2.scatter(t[mt_ind], throttle[mt_ind], c='m', s=10)
+    if is_outage is not None:
+        for i, is_out in enumerate(is_outage):
+            if is_out:
+                ax1.scatter(t[i], throttle[i], c='m', s=10)
+                ax2.scatter(t[i], throttle[i], c='m', s=10)
     plt.grid(True)
     plt.tight_layout()
     if show_plot:

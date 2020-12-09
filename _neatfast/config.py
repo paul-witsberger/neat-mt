@@ -133,9 +133,6 @@ class DefaultClassConfig(object):
 class Config(object):
     """A simple container for user-configurable parameters of NEAT."""
 
-    missed_thrust_allowed = None
-    missed_thrust_tbe_factor = None
-    missed_thrust_rd_factor = None
     __params = [ConfigParameter('pop_size', int),
                 ConfigParameter('fitness_criterion', str),
                 ConfigParameter('fitness_threshold', float),
@@ -151,9 +148,12 @@ class Config(object):
 
     def __init__(self, genome_type, reproduction_type, species_set_type, stagnation_type, filename):
         # Check that the provided types have the required methods.
-        self.do_terminal_lambert_arc = None
-        self.num_nodes = None
         self.num_cases = None
+        self.num_nodes = None
+        self.missed_thrust_rd_factor = None
+        self.missed_thrust_tbe_factor = None
+        self.missed_thrust_allowed = None
+        self.do_terminal_lambert_arc = None
         assert hasattr(genome_type, 'parse_config')
         assert hasattr(reproduction_type, 'parse_config')
         assert hasattr(species_set_type, 'parse_config')

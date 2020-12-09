@@ -118,6 +118,7 @@ class Population(object):
             # END PAUL EDIT #
 
             # Get best individual
+            curr_fit, curr_pop_keys, curr_pop_values = None, None, None
             curr_fit = np.array([v.fitness for v in itervalues(self.population)])
             # curr_pop = np.array([v for v in itervalues(self.population)])
             curr_pop_keys = np.array(list(self.population.keys()))
@@ -138,9 +139,7 @@ class Population(object):
                 best_pop_values = curr_pop_values
                 # fitness_library = {p: f for p, f in zip(curr_pop, curr_fit)}
             else:
-                # fitness_library = itemgetter(*[k for k in pop.population.keys()])(self.population)
-                # best_fitnesses = np.array([v.fitness for v in self.population.keys()])
-                # best_population =
+                combined_fit, combined_pop_keys, combined_pop_values, indices_fit = None, None, None, None
                 combined_fit = np.hstack((curr_fit, best_fit))
                 combined_fit, indices_fit = np.unique(combined_fit, return_index=True)
                 best_fit = combined_fit[-len(self.population):]
@@ -157,7 +156,10 @@ class Population(object):
             #         best = g
 
             # Report statistics
-            self.reporters.post_evaluate(self.config, self.population, self.species, best)
+            # try:
+            self.reporters.post_evaluate(self.config, self.population, self.species, curr_pop_values[-1])
+            # except KeyError:
+            #     print('KeyError found...skipping reporting...')
 
             # Track the best genome ever seen.
             if self.best_genome is None or best.fitness > best_fitness:

@@ -51,8 +51,8 @@ class DefaultReproduction(DefaultClassConfig):
 
         return new_genomes
 
-    @staticmethod
-    def compute_spawn(adjusted_fitness, previous_sizes, pop_size, min_species_size):
+    # @staticmethod
+    def compute_spawn(self, adjusted_fitness, previous_sizes, pop_size, min_species_size):
         """Compute the proper number of offspring per species (proportional to fitness)."""
         af_sum = sum(adjusted_fitness)
 
@@ -79,7 +79,8 @@ class DefaultReproduction(DefaultClassConfig):
         # the population size requested by the user.
         total_spawn = sum(spawn_amounts)
         norm = pop_size / total_spawn
-        spawn_amounts = [max(min_species_size, int(round(n * norm))) for n in spawn_amounts]
+        spawn_amounts = [max(max(min_species_size, int(round(n * norm))), self.reproduction_config.elitism + 1)
+                         for n in spawn_amounts]
 
         return spawn_amounts
 
@@ -143,7 +144,7 @@ class DefaultReproduction(DefaultClassConfig):
         species.species = {}
         for spawn, s in zip(spawn_amounts, remaining_species):
             # If elitism is enabled, each species always at least gets to retain its elites.
-            spawn = max(spawn, self.reproduction_config.elitism + 1)
+            # spawn = max(spawn, self.reproduction_config.elitism + 1)
 
             assert spawn > 0
 

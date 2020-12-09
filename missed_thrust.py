@@ -38,11 +38,11 @@ def eval_traj_neat(genome: neat.genome.DefaultGenome, config: neat.config.Config
     else:
         _do_capture = config.do_terminal_lambert_arc
     # Define times
-    ti = np.empty(config.num_nodes + 2)
-    # ti = np.power(np.linspace(0, 1, num_nodes), 3 / 2) * (tf - t0) + t0
-    ti[:-2] = np.linspace(tc.t0, tc.tf, config.num_nodes)
-    ti[-2:] = ti[-3]
-    ti /= tc.tu
+    # ti = np.empty(config.num_nodes + 2)
+    # # ti = np.power(np.linspace(0, 1, num_nodes), 3 / 2) * (tf - t0) + t0
+    # ti[:-2] = np.linspace(tc.t0, tc.tf, config.num_nodes)
+    # ti[-2:] = ti[-3]
+    # ti /= tc.tu
 
     # Initialize score vector
     f = np.empty(config.num_cases)
@@ -58,9 +58,8 @@ def eval_traj_neat(genome: neat.genome.DefaultGenome, config: neat.config.Config
         y0[:-1], y0[-1] = _y0, tc.m0
 
         # Integrate trajectory
-        y, miss_ind, full_traj, maneuvers = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, config)
-        # dv1, dv2 = maneuvers[:2]
-        # mf, tf, yf_actual = maneuvers
+        # y, miss_ind, full_traj, maneuvers = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, config)
+        y, times, is_outage, full_traj, maneuvers = integrate_func_missed_thrust(thrust_fcn, y0, yf, config)
 
         # Check if integration was stopped early - if so, assign a large penalty
         if len(y.shape) == 0:
@@ -74,7 +73,7 @@ def eval_traj_neat(genome: neat.genome.DefaultGenome, config: neat.config.Config
 
         # Calculate final propellant mass ratio and final time ratio
         m_ratio = (y0[-1] - y[-1, -1]) / y0[-1]
-        t_ratio = (ti[-1] - ti[-3]) / ti[-3]
+        t_ratio = (times[-1] - times[-3]) / times[-3]
 
         # Get fitness
         f[i], dr, dv = traj_fit_func(yf_actual, yf_target, y0[:6], m_ratio, t_ratio)
@@ -227,8 +226,11 @@ def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float,
     return f, dr, dv
 
 
-def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat, y0: np.ndarray, ti: np.ndarray,
-                                 yf: np.ndarray, config: neat.config.Config, save_full_traj: bool = False,
+def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat,
+                                 y0: np.ndarray,
+                                 yf: np.ndarray,
+                                 config: neat.config.Config,
+                                 save_full_traj: bool = False,
                                  fixed_step: bool = tc.fixed_step) -> \
                                 (np.ndarray, np.ndarray, np.ndarray, list):
     """
@@ -244,7 +246,6 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
     zeros for everything.
     :param thrust_fcn:
     :param y0:
-    :param ti:
     :param yf:
     :param config:
     :param save_full_traj:
@@ -256,20 +257,23 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
     state_size, time_size = len(y0), 2
     param_size = 17 if tc.variable_power else 5
 
+    # Define flag for missed thrust
+    if config.missed_thrust_allowed:
+        outages = calc_mtes_v2(tc.tf, tc.t0, config.missed_thrust_tbe_factor, config.missed_thrust_rd_factor)
+        if outages.shape == (0, 0):
+            outages = np.array([[]], dtype=np.float64)
+    else:
+        outages = np.array([[]], dtype=np.float64)
+
+    # Create array of thrust segments based on outages
+    times, is_outage = build_time_array(outages)
+
     # Create placeholder matrix for trajectory - these are dimensionalized states
-    y = np.empty((len(ti), state_size), dtype=np.float64)
+    y = np.empty((len(times), state_size), dtype=np.float64)
 
     # Assign initial condition
     y[0] = y0[:]
 
-    # Define flag for missed thrust
-    if config.missed_thrust_allowed:
-        miss_ind = calculate_missed_thrust_events(ti * tc.tu, config.missed_thrust_tbe_factor,
-                                                  config.missed_thrust_rd_factor)
-    else:
-        miss_ind = np.array([], dtype=np.int64)
-
-    # Main loop
     # Choose type of integrator and equations of motion
     if fixed_step:
         integrator_type = 0  # 0 fixed step
@@ -277,8 +281,9 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
         integrator_type = 1  # adaptive step
     eom_type = 0  # 0 constant power, 1 variable power, 2 state transition matrix
 
-    full_traj = np.empty(((len(ti) - 3) * tc.n_steps, state_size + 1), dtype=np.float64)
-    for i in range(len(ti) - 3):
+    # Main loop
+    full_traj = np.empty(((len(times) - 3) * tc.n_steps, state_size + 1), dtype=np.float64)
+    for i in range(len(times) - 3):
         # Check if orbital energy is within reasonable bounds - terminate integration if not
         r_mag = ou.mag3(y[i, :3])
         v_mag = ou.mag3(y[i, 3:6])
@@ -286,15 +291,15 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
         if (eps > tc.max_energy or eps < tc.min_energy) and not save_full_traj:
             return np.array(0), 0, 0, [np.empty(3), np.empty(3), 0]
 
-        # Fixed step integrator step size
-        step_size = (ti[i+1] - ti[i]) / tc.n_steps - 1e-15  # take a small amount off so fixed steps land within bounds
+        # Fixed step integrator step size - take a small amount off so fixed steps land within bounds
+        step_size = (times[i + 1] - times[i]) / tc.n_steps - 1e-15
 
         # Ratio of remaining propellant mass, and time ratio
         mass_ratio = (y[i, -1] - tc.m_dry) / (y[0, -1] - tc.m_dry)  # (curr - dry) / (init - dry) = curr_prp / init_prp
-        time_ratio = ti[i] / ti[-3]  # curr time / final time
+        time_ratio = times[i] / times[-1]  # curr time / final time
 
         # Check if i is supposed to miss thrust for this segment
-        if i in miss_ind or y[i, -1] <= tc.m_dry + 0.01:
+        if is_outage[i] or y[i, -1] <= tc.m_dry:
             # Missed-thrust event, or no propellant remaining
             thrust = np.array([0., 0, 0])
         else:
@@ -306,19 +311,11 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
             thrust = thrust_fcn(nn_input) * tc.T_max_kN / tc.fu
 
         # Create list of parameters to pass to integrator
-        if tc.variable_power:
-            param = [float(tc.m_dry / tc.mu), float(thrust[0]), float(thrust[1]), float(thrust[2]), tc.power_reference,
-                     tc.power_min, tc.power_max, float(tc.thrust_power_coef[0]), float(tc.thrust_power_coef[1]),
-                     float(tc.thrust_power_coef[2]), float(tc.thrust_power_coef[3]), float(tc.thrust_power_coef[4]),
-                     float(tc.isp_power_coef[0]), float(tc.isp_power_coef[1]), float(tc.isp_power_coef[2]),
-                     float(tc.isp_power_coef[3]), float(tc.isp_power_coef[4])]
-        else:
-            param = [float(c.g0_ms2 * tc.Isp / tc.du * tc.tu), float(tc.m_dry / tc.mu), float(thrust[0]),
-                     float(thrust[1]), float(thrust[2])]
+        param = _update_params(thrust)
 
         # Propagate from the current state until the next time step
-        traj = tbp.prop(list(y[i] / tc.state_scales), [ti[i], ti[i + 1]], param, state_size, time_size, param_size,
-                        tc.rtol, tc.atol, step_size, integrator_type, eom_type)
+        traj = tbp.prop(list(y[i] / tc.state_scales), [times[i], times[i + 1]], param, state_size, time_size,
+                        param_size, tc.rtol, tc.atol, step_size, integrator_type, eom_type)
 
         # Save full trajectory including intermediate states
         if save_full_traj:
@@ -338,26 +335,24 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
         # Check if final position is "close" to target position - if not, compute a Lambert arc to match target state
         if pos_error > tc.r_limit_soi * c.r_soi_mars:  # very far away
             # print('Performing far capture...')
-            maneuvers = ou.lambert_min_dv(tc.gm, state_f, ti[-3] * tc.tu, tc.capture_time_low, tc.capture_time_high,
+            maneuvers = ou.lambert_min_dv(tc.gm, state_f, times[-3] * tc.tu, tc.capture_time_low, tc.capture_time_high,
                                           max_count=10, short=tc.capture_short)
-            ti[-1] += maneuvers[-1] * c.day_to_sec / tc.tu
             gm_capture = tc.gm
             change_frame = False
         else:
             print('Performing close capture')
-            # maneuvers = ou.capture(state_rel, tc.capture_periapsis_radius_km, tc.capture_period_day, tc.gm_target,
-            #                        c.r_soi_mars, tc.capture_low_not_high, tc.capture_current_not_optimal)
             maneuvers = ou._in_current(state_rel, tc.capture_periapsis_radius_km, tc.capture_period_day * c.day_to_sec,
                                        tc.gm_target, tc.capture_low_not_high)
             state_f = state_rel
             gm_capture = tc.gm_target
             change_frame = True
+        times[-1] += maneuvers[-1] * c.day_to_sec / tc.tu
 
         if save_full_traj:
             # Compute the intermediate states of the capture
             y_capture, full_traj_capture = ou.propagate_capture(maneuvers, state_f, mf, du=ou.mag3(state_f[:3]),
                                                                 gm=gm_capture)
-            full_traj_capture[:, 0] += ti[-2]  # add the time of the transfer to the time of capture
+            full_traj_capture[:, 0] += times[-2]  # add the time of the transfer to the time of capture
             ti_capture = full_traj_capture[:, 0]
 
             # Lambert arc is in heliocentric frame, other captures are in target body centric frame
@@ -392,11 +387,11 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
                     print('capture type = close')
                     print('other inputs = ')
                     print([tc.capture_periapsis_radius_km, tc.capture_period_day * c.day_to_sec,
-                                       tc.gm_target, tc.capture_low_not_high])
+                           tc.gm_target, tc.capture_low_not_high])
                 else:
                     print('capture type = far')
                     print('other inputs = ')
-                    print([tc.gm, ti[-3] * tc.tu, tc.capture_time_low, tc.capture_time_high, 10, tc.capture_short])
+                    print([tc.gm, times[-3] * tc.tu, tc.capture_time_low, tc.capture_time_high, 10, tc.capture_short])
                 print('state_f = ')
                 print(state_f)
                 print('maneuvers = ')
@@ -412,15 +407,90 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
         # No maneuver
         maneuvers = [np.zeros(3, float), np.zeros(3, float), 0]
         y[-1] = y[-2] = y[-3]
-        ti[-1] = ti[-2] = ti[-3]  # this is used later since ti is passed by reference
-        # full_traj = np.array(full_traj)
+        times[-1] = times[-2] = times[-3]
         full_traj = full_traj[:-(2 * tc.n_steps)]
 
     # Dimensionalize states
     if save_full_traj:
         full_traj[:, 1:] = full_traj[:, 1:] * tc.state_scales
 
-    return y, miss_ind, full_traj, maneuvers
+    return y, times, is_outage, full_traj, maneuvers
+
+
+@njit
+def calc_mtes_v2(tf: float, t0: float = 0., tbe_factor: float = 1., rd_factor: float = 1.) -> np.ndarray:
+    # Define Weibull distribution parameters
+    k_tbe, lambda_tbe = 0.86737, 0.62394 * tbe_factor
+    k_rd, lambda_rd = 1.144, 2.459 * rd_factor
+    max_discovery_delay_days, op_recovery_days = 3, 0.5
+    # Initialize list of outage start and stop times
+    outages = list()
+    time_between_events, recovery_duration, cascading = 0., 0., False
+    prev_start = t0
+    while True:
+        time_between_events = np.random.weibull(k_tbe) * lambda_tbe * year_to_sec  # calculate time between events
+        # Check that the previous outage has already finished.
+        if len(outages) > 0:
+            if time_between_events < (outages[-1][1] - outages[-1][0]):
+                cascading = True
+        else:
+            cascading = False
+        # Check if the next event happens before the end of the time of flight
+        if (time_between_events < tf) and (prev_start + time_between_events < tf):
+            recovery_duration = np.random.weibull(k_rd) * lambda_rd * day_to_sec  # calculate the recovery duration
+            recovery_duration += (np.random.rand() * max_discovery_delay_days * day_to_sec) + \
+                                 (op_recovery_days * day_to_sec)  # discovery delay and operational recovery
+            if cascading:
+                outages[-1][1] = outages[-1][0] + time_between_events + recovery_duration
+            else:
+                outages.append([prev_start + time_between_events, prev_start + time_between_events + recovery_duration])
+            prev_start = outages[-1][0]
+        # Return outages as an array if final time is reached
+        else:
+            if len(outages) > 0:
+                return np.array(outages)
+            else:
+                return np.empty((0, 0), dtype=np.float64)
+
+
+@njit
+def build_time_array(outages):
+    times = [0.]
+    is_outage = list()
+    outages_remaining = outages.shape[0]
+    while True:
+        # Check if we should keep going
+        if times[-1] < tc.tf:
+            if times[-1] + tc.segment_duration_sec < tc.tf:
+                next_time = times[-1] + tc.segment_duration_sec
+            else:
+                next_time = tc.tf
+            # Check if we need to add a partial or a full segment
+            if outages_remaining > 0 and outages[-outages_remaining, 0] < next_time:
+                times.append(outages[-outages_remaining, 0])
+                times.append(outages[-outages_remaining, 1])
+                outages_remaining -= 1
+                is_outage.append(False)
+                is_outage.append(True)
+            else:
+                times.append(next_time)
+                is_outage.append(False)
+        else:
+            times.append(times[-1])
+            times.append(times[-1])
+            return np.array(times) / tc.tu, is_outage
+
+
+def _update_params(thrust):
+    if tc.variable_power:
+        return [float(tc.m_dry / tc.mu), float(thrust[0]), float(thrust[1]), float(thrust[2]), tc.power_reference,
+               tc.power_min, tc.power_max, float(tc.thrust_power_coef[0]), float(tc.thrust_power_coef[1]),
+               float(tc.thrust_power_coef[2]), float(tc.thrust_power_coef[3]), float(tc.thrust_power_coef[4]),
+               float(tc.isp_power_coef[0]), float(tc.isp_power_coef[1]), float(tc.isp_power_coef[2]),
+               float(tc.isp_power_coef[3]), float(tc.isp_power_coef[4])]
+    else:
+        return [float(c.g0_ms2 * tc.Isp / tc.du * tc.tu), float(tc.m_dry / tc.mu), float(thrust[0]),
+               float(thrust[1]), float(thrust[2])]
 
 
 @njit

@@ -5,7 +5,7 @@
 [NEAT]
 fitness_criterion      = mean
 fitness_threshold      = 0
-pop_size               = 1000
+pop_size               = 100
 reset_on_extinction    = 0
 fitness_plot_frequency = 15
 num_nodes = 40

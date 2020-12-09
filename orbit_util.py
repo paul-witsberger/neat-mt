@@ -778,6 +778,8 @@ def lambert_min_dv(gm: float, state_0: np.ndarray, t0: float, low: float, high: 
     sol = lambert(float(gm), r0.tolist(), state_f[:3].tolist(), float(tof_of_min_dv * c.day_to_sec), short)
     dv1 = sol[0] - v0
     dv2 = state_f[3:6] - sol[1]
+    dv1[np.isnan(dv1) + np.isinf(dv1)] = 1e6
+    dv2[np.isnan(dv2) + np.isinf(dv2)] = 1e6
     # dv2 = hyperbolic_capture_from_infinity(state_f[3:6] - sol[1], tc.capture_periapsis_radius_km, tc.capture_period_day, gm,
     #                                        tc.capture_low_not_high)
     return dv1, dv2, tof_of_min_dv

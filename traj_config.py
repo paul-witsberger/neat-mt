@@ -15,7 +15,6 @@ assert n_dim == 2 or n_dim == 3
 if n_dim == 2:
     ind_dim = np.array([True, True, False, True, True, False, False])
 else:
-    # ind_dim = np.array([True, True, False, True, True, False, False])
     ind_dim = np.array([True] * 6 + [False], dtype=np.bool)
 
 # Define initial and final orbits
@@ -128,13 +127,10 @@ max_energy = - c.u_sun_km3s2 / 2 / max(a0_max, af_max) * 0.8
 min_energy = - c.u_sun_km3s2 / 2 / min(a0_min, af_min) * 1.2
 
 # Choose whether missed thrust events occur or not, and scale time-between-events and recovery-duration
-missed_thrust_allowed = False
-missed_thrust_tbe_factor = 1.  # make less than one for events to be more frequent
-missed_thrust_rd_factor = 1.  # make greater than one for events to be more severe
-
-# Specify missed thrust cases
-# num_cases = 1
-# num_outages = 0
+# missed_thrust_allowed = False
+# missed_thrust_tbe_factor = 1.  # make less than one for events to be more frequent
+# missed_thrust_rd_factor = 1.  # make greater than one for events to be more severe
+segment_duration_sec = 14. * c.day_to_sec  # the time between thrust updates assuming no outages occur
 
 # Specify if a Lambert arc should be computed to match the final state
 do_terminal_lambert_arc = False
@@ -151,7 +147,7 @@ vallado_rtol = 1e-14  # Tolerance for vallado() convergence
 vallado_numiter = 50  # Number of iterations allowed in vallado()
 capture_short = True
 if capture_short:
-    capture_time_low = 5  # minimum time of Lambert arc, days
+    capture_time_low = 1  # minimum time of Lambert arc, days
     capture_time_high = 60  # maximum time of Lambert arc, days
 else:
     capture_time_low = 300  # minimum time of Lambert arc, days
@@ -178,3 +174,6 @@ tu = (du ** 3 / gm) ** 0.5
 mu = m0
 fu = mu * du / tu / tu
 state_scales = [du, du, du, du / tu, du / tu, du / tu, mu]
+
+# Specify thrust vector appearance
+arrows_with_heads = True

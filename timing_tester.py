@@ -5,6 +5,8 @@ import os
 from operator import itemgetter
 import traj_config as tc
 import orbit_util as ou
+import constants as c
+from numba import njit
 
 
 def timeit_auto(stmt="pass", setup="pass", repeat=3):
@@ -20,7 +22,7 @@ def timeit_auto(stmt="pass", setup="pass", repeat=3):
     t = timeit.Timer(stmt, setup)
 
     # determine number so that 0.1 <= total time < 1.0
-    number = 1
+    number = 3
     for i in range(0, 10):
         number = 10**i
         x = t.timeit(number)  # seconds
@@ -32,21 +34,94 @@ def timeit_auto(stmt="pass", setup="pass", repeat=3):
     return number, usec
 
 
-# num_iter = int(1e4)
-
 # Set up
-state_f = np.array([-1.32427491e+08, -9.62901286e+07,  0.,  1.59757739e+01, -2.32281637e+01, 0.])
-tf = 9.146361329085716
-short = tc.capture_short
 
+
+@njit
 def version1():
-    num_iter = 1
-    ou.lambert_min_dv(tc.gm, state_f, tf, tc.capture_time_low, tc.capture_time_high, num_iter, short=short)
+    tf = tc.tf
+    t0 = 0.
+    tbe_factor = 1.
+    rd_factor = 1.
+    # Define Weibull distribution parameters
+    k_tbe, lambda_tbe = 0.86737, 0.62394 * tbe_factor
+    k_rd, lambda_rd = 1.144, 2.459 * rd_factor
+    max_discovery_delay_days, op_recovery_days = 3, 0.5
+    # Initialize list of outage start and stop times
+    outages = list()
+    time_between_events, recovery_duration, cascading = 0., 0., False
+    prev_start = t0
+    while True:
+        time_between_events = np.random.weibull(k_tbe) * lambda_tbe * c.year_to_sec  # calculate time between events
+        # Check that the previous outage has already finished.
+        if len(outages) > 0:
+            # try:
+            if time_between_events < (outages[-1][1] - outages[-1][0]):
+                cascading = True
+            # except IndexError as err:
+            #     print('spot 2')
+            #     raise err
+        else:
+            cascading = False
+        # check if the next event happens before the end of the time of flight
+        if (time_between_events < tf) and (prev_start + time_between_events < tf):
+            recovery_duration = np.random.weibull(k_rd) * lambda_rd * c.day_to_sec  # calculate the recovery duration
+            recovery_duration += (np.random.rand() * max_discovery_delay_days * c.day_to_sec) + \
+                                 (op_recovery_days * c.day_to_sec)  # discovery delay and operational recovery
+            if cascading:
+                outages[-1][1] = outages[-1][0] + time_between_events + recovery_duration
+
+            else:
+                outages.append([prev_start + time_between_events, prev_start + time_between_events + recovery_duration])
+            prev_start = outages[-1][0]
+        else:
+            if len(outages) > 0:
+                return np.array(outages)
+            else:
+                return np.empty((0, 0), dtype=np.float64)
 
 
 def version2():
-    num_iter = 10
-    ou.lambert_min_dv(tc.gm, state_f, tf, tc.capture_time_low, tc.capture_time_high, num_iter, short=short)
+    tf = tc.tf
+    t0 = 0.
+    tbe_factor = 1.
+    rd_factor = 1.
+    # Define Weibull distribution parameters
+    k_tbe, lambda_tbe = 0.86737, 0.62394 * tbe_factor
+    k_rd, lambda_rd = 1.144, 2.459 * rd_factor
+    max_discovery_delay_days, op_recovery_days = 3, 0.5
+    # Initialize list of outage start and stop times
+    outages = list()
+    time_between_events, recovery_duration, cascading = 0., 0., False
+    prev_start = t0
+    while True:
+        time_between_events = np.random.weibull(k_tbe) * lambda_tbe * c.year_to_sec  # calculate time between events
+        # Check that the previous outage has already finished.
+        if len(outages) > 0:
+            # try:
+            if time_between_events < (outages[-1][1] - outages[-1][0]):
+                cascading = True
+            # except IndexError as err:
+            #     print('spot 2')
+            #     raise err
+        else:
+            cascading = False
+        # check if the next event happens before the end of the time of flight
+        if (time_between_events < tf) and (prev_start + time_between_events < tf):
+            recovery_duration = np.random.weibull(k_rd) * lambda_rd * c.day_to_sec  # calculate the recovery duration
+            recovery_duration += (np.random.rand() * max_discovery_delay_days * c.day_to_sec) + \
+                                 (op_recovery_days * c.day_to_sec)  # discovery delay and operational recovery
+            if cascading:
+                outages[-1][1] = outages[-1][0] + time_between_events + recovery_duration
+
+            else:
+                outages.append([prev_start + time_between_events, prev_start + time_between_events + recovery_duration])
+            prev_start = outages[-1][0]
+        else:
+            if len(outages) > 0:
+                return np.array(outages)
+            else:
+                return np.empty((0, 0), dtype=np.float64)
 
 
 # Version 1
