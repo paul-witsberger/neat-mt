@@ -1,7 +1,8 @@
 """
 Runs evaluation functions in parallel subprocesses in order to evaluate multiple genomes at once.
 """
-from multiprocessing import Pool
+from multiprocessing import Pool, TimeoutError
+# from functools import partial
 
 class ParallelEvaluator(object):
     def __init__(self, num_workers, eval_function, timeout=None):
@@ -18,14 +19,24 @@ class ParallelEvaluator(object):
         self.pool.close() # should this be terminate?
         self.pool.join()
 
-    def evaluate(self, genomes, config):
+    def evaluate(self, genomes, config, no_timeout=False):
         jobs = []
         for ignored_genome_id, genome in genomes:
             jobs.append(self.pool.apply_async(self.eval_function, (genome, config)))
 
         # assign the fitness back to each genome
+        if no_timeout:
+            timeout = self.timeout
+            self.timeout = None
         for job, (ignored_genome_id, genome) in zip(jobs, genomes):
-            genome.fitness = job.get(timeout=self.timeout)
+            try:
+                genome.fitness = job.get(timeout=self.timeout)
+            except TimeoutError:
+                print('Timed out')
+                genome.fitness = -1e4
+        if no_timeout:
+            self.timeout = timeout
+
 
 class SerialEvaluator(object):
     def __init__(self, eval_function):

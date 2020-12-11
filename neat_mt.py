@@ -25,8 +25,9 @@ def run(config_name='default', init_state=None, parallel=True, max_gens=traj_con
     # Run
     if parallel:
         num_workers = os.cpu_count() - 1
-        pe = neat.ParallelEvaluator(num_workers, eval_traj_neat)
-        winner, best_pop = pop.run(pe.evaluate, n=max_gens)
+        timeout = 1
+        pe = neat.ParallelEvaluator(num_workers, eval_traj_neat, timeout=timeout)
+        winner, best_pop = pop.run(pe.evaluate, n=max_gens, num_workers=num_workers)
     else:
         se = neat.SerialEvaluator(eval_traj_neat)
         winner, best_pop = pop.run(se.evaluate, n=max_gens)
@@ -66,7 +67,7 @@ if __name__ == '__main__':
     # NOTE add -OO to configuration when running for slight speed improvement
     _get_timing = False
     _parallel = True
-    _max_gens = [100, 50, 20]
+    _max_gens = [5, 5, 5]
     pop = None
 
     t_start = time.time()

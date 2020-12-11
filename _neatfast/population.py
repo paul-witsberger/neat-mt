@@ -64,7 +64,7 @@ class Population(object):
     def remove_reporter(self, reporter):
         self.reporters.remove(reporter)
 
-    def run(self, fitness_function, n=None):
+    def run(self, fitness_function, n=None, num_workers=None):
         """
         Runs NEAT's genetic algorithm for at most n generations.  If n
         is None, run until solution is found or extinction occurs.
@@ -109,7 +109,14 @@ class Population(object):
             # individuals_to_evaluate = [i for i in list(iteritems(self.population)) if (i[0] not in fitness_library[:, 0])]
             # print('Evaluating %i individuals.' % len(individuals_to_evaluate))
             individuals_to_evaluate = [i for i in list(iteritems(self.population))]
-            fitness_function(individuals_to_evaluate, self.config)
+            if self.generation > 1:
+                fitness_function(individuals_to_evaluate, self.config)
+            else:
+                if num_workers is not None:
+                    fitness_function(individuals_to_evaluate[:num_workers], self.config, no_timeout=True)
+                    fitness_function(individuals_to_evaluate[num_workers:], self.config)
+                else:
+                    fitness_function(individuals_to_evaluate, self.config, no_timeout=True)
 
             # # Store new entries
             # if len(individuals_to_evaluate) > 0:

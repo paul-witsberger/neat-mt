@@ -6,7 +6,7 @@ from operator import itemgetter
 import traj_config as tc
 import orbit_util as ou
 import constants as c
-from numba import njit
+from numba import njit, jit
 
 
 def timeit_auto(stmt="pass", setup="pass", repeat=3):
@@ -37,7 +37,7 @@ def timeit_auto(stmt="pass", setup="pass", repeat=3):
 # Set up
 
 
-@njit
+@jit(nopython=True, cache=True)
 def version1():
     tf = tc.tf
     t0 = 0.

@@ -1,15 +1,16 @@
-from orbit_util import *
+import numpy as np
+import orbit_util as ou
 from traj_config import n_dim, n_outputs, input_frame, input_indices, scales_in, scales_out, gm, out_node_scales,\
     angle_choices, use_multiple_angle_nodes
-from numba import njit
+from numba import njit, jit
 
 
-@njit
+@jit(nopython=True, cache=False)
 def scale_inputs(inputs: np.ndarray, scales_in: np.ndarray = scales_in) -> np.ndarray:
     return inputs / scales_in
 
 
-@njit
+@jit(nopython=True, cache=False)
 def scale_outputs(outputs: np.ndarray, old_scales: np.ndarray = out_node_scales, new_scales: np.ndarray = scales_out,
                   nd: int = n_outputs):
     so = old_scales
@@ -84,7 +85,7 @@ class Neurocontroller:
         return outputs_scaled
 
     def getThrustVec(self, state: np.ndarray) -> np.ndarray:
-        state_coe = inertial_to_keplerian(state)
+        state_coe = ou.inertial_to_keplerian(state)
         state_scaled = self.scaleInputs(state_coe)
         out = self.forwardPass(state_scaled)
         angle, throttle = self.scaleOutputs(out)
@@ -103,17 +104,17 @@ class Neurocontroller:
         # Convert the state to the desired frame with the appropriate number of dimensions (starts in inertial frame)
         if n_dim == 2:
             # if input_frame == 'kep':  # 2D Keplerian
-            curr = inertial_to_keplerian_2d(state[:n_dim * 2], gm=gm)
-            targ = inertial_to_keplerian_2d(state[n_dim * 2:n_dim * 4], gm=gm)
+            curr = ou.inertial_to_keplerian_2d(state[:n_dim * 2], gm=gm)
+            targ = ou.inertial_to_keplerian_2d(state[n_dim * 2:n_dim * 4], gm=gm)
         else:
             assert input_frame == 'kep' or input_frame == 'mee'
             if input_frame == 'kep':  # 3D Keplerian
                 # TODO is there a way to avoid converting inertial to keplerian each step?
-                curr = inertial_to_keplerian_3d(state[:n_dim * 2], gm=gm)
-                targ = inertial_to_keplerian_3d(state[n_dim * 2:n_dim * 4], gm=gm)
+                curr = ou.inertial_to_keplerian_3d(state[:n_dim * 2], gm=gm)
+                targ = ou.inertial_to_keplerian_3d(state[n_dim * 2:n_dim * 4], gm=gm)
             else:  # 3D MEE  # TODO this is wrong - ine2kep first, then kep2mee
-                curr = inertial_to_keplerian_3d(keplerian_to_mee_3d(state[:n_dim * 2]), gm=gm)
-                targ = inertial_to_keplerian_3d(keplerian_to_mee_3d(state[n_dim * 2:n_dim * 4]), gm=gm)
+                curr = ou.inertial_to_keplerian_3d(ou.keplerian_to_mee_3d(state[:n_dim * 2]), gm=gm)
+                targ = ou.inertial_to_keplerian_3d(ou.keplerian_to_mee_3d(state[n_dim * 2:n_dim * 4]), gm=gm)
         _state[:n_dim * 2] = curr
         _state[n_dim * 2:n_dim * 4] = targ
         _state[-2:] = state[-2:]

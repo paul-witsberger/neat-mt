@@ -7,7 +7,7 @@ import orbit_util as ou
 import constants as c
 import os
 import pickle
-from numba import njit
+from numba import njit, jit
 from traj_config import gm, ind_dim
 from constants import au_to_km
 import warnings
@@ -27,7 +27,6 @@ def eval_traj_neat(genome: neat.genome.DefaultGenome, config: neat.config.Config
     :param genome:
     :param config:
     """
-    # t_act_0 = time.time()
     # Create network and get thrust vector
     net = neat.nn.FeedForwardNetwork.create(genome, config)
     nc = Neurocontroller.init_from_neat_net(net, tc.scales_in, tc.scales_out)
@@ -261,7 +260,7 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
     if config.missed_thrust_allowed:
         outages = calc_mtes_v2(tc.tf, tc.t0, config.missed_thrust_tbe_factor, config.missed_thrust_rd_factor)
         if outages.shape == (0, 0):
-            outages = np.array([[]], dtype=np.float64)
+            outages = np.array([[], []], dtype=np.float64)
     else:
         outages = np.array([[]], dtype=np.float64)
 
@@ -417,7 +416,7 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
     return y, times, is_outage, full_traj, maneuvers
 
 
-@njit
+@jit(nopython=True, cache=True)
 def calc_mtes_v2(tf: float, t0: float = 0., tbe_factor: float = 1., rd_factor: float = 1.) -> np.ndarray:
     # Define Weibull distribution parameters
     k_tbe, lambda_tbe = 0.86737, 0.62394 * tbe_factor
@@ -433,10 +432,12 @@ def calc_mtes_v2(tf: float, t0: float = 0., tbe_factor: float = 1., rd_factor: f
         if len(outages) > 0:
             if time_between_events < (outages[-1][1] - outages[-1][0]):
                 cascading = True
+            else:
+                cascading = False
         else:
             cascading = False
         # Check if the next event happens before the end of the time of flight
-        if (time_between_events < tf) and (prev_start + time_between_events < tf):
+        if prev_start + time_between_events < tf:
             recovery_duration = np.random.weibull(k_rd) * lambda_rd * day_to_sec  # calculate the recovery duration
             recovery_duration += (np.random.rand() * max_discovery_delay_days * day_to_sec) + \
                                  (op_recovery_days * day_to_sec)  # discovery delay and operational recovery
@@ -450,10 +451,10 @@ def calc_mtes_v2(tf: float, t0: float = 0., tbe_factor: float = 1., rd_factor: f
             if len(outages) > 0:
                 return np.array(outages)
             else:
-                return np.empty((0, 0), dtype=np.float64)
+                return np.empty((0, 2), dtype=np.float64)
 
 
-@njit
+@jit(nopython=True, cache=True)
 def build_time_array(outages):
     times = [0.]
     is_outage = list()
@@ -493,7 +494,7 @@ def _update_params(thrust):
                float(thrust[1]), float(thrust[2])]
 
 
-@njit
+@jit(nopython=True, cache=True)
 def calculate_missed_thrust_events(ti: np.ndarray, tbe_factor=1.0, rd_factor=1.0) -> np.ndarray:
     """
     Return indices of random missed thrust events that occur according to the Weibull distributions given by Imken et al
@@ -527,7 +528,7 @@ def calculate_missed_thrust_events(ti: np.ndarray, tbe_factor=1.0, rd_factor=1.0
             return miss_indices[:ctr]  # TODO make sure this works if no outages occur
 
 
-@njit
+@jit(nopython=True, cache=True)
 def find_nearest(array: np.ndarray, value: float) -> int:
     """
     Helper function that finds the closest index of an array to a specified value

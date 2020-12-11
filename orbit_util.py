@@ -4,7 +4,7 @@ from numpy import cos, sin
 import math
 from traj_config import gm
 import traj_config as tc
-from numba import njit, vectorize, float64
+from numba import njit, vectorize, float64, jit
 from copy import copy
 from constants import ephem, sec_to_day, year_to_sec, reference_date_jd1950, day_to_jc, u_earth_km3s2
 import constants as c
@@ -15,7 +15,7 @@ lambert = boost_tbp.maneuvers().lambert
 tbp = boost_tbp.TBP()
 
 
-@njit
+@jit(nopython=True, cache=True)
 def hohmann_circ(a1: float, a2: float, gm: float = gm) -> float:
     """
     Returns the delta V to transfer between two circular orbits using a Hohmann transfer
@@ -35,7 +35,7 @@ def hohmann_circ(a1: float, a2: float, gm: float = gm) -> float:
     return dv
 
 
-@njit
+@jit(nopython=True, cache=True)
 def hohmann_rp_ra(rp1: float, vp1: float, ra2: float, va2: float, gm: float = gm) -> float:
     """
     Returns the delta V to transfer between two co-linear elliptical orbits using a Hohmann transfer
@@ -55,7 +55,7 @@ def hohmann_rp_ra(rp1: float, vp1: float, ra2: float, va2: float, gm: float = gm
     return dv
 
 
-@njit
+@jit(nopython=True, cache=True)
 def coe4_from_rv(r_vec: np.ndarray, v_vec: np.ndarray, gm: float = gm) -> np.ndarray:
     r = np.linalg.norm(r_vec)
     v = np.linalg.norm(v_vec)
@@ -82,7 +82,7 @@ def coe4_from_rv(r_vec: np.ndarray, v_vec: np.ndarray, gm: float = gm) -> np.nda
     return coe
 
 
-@njit
+@jit(nopython=True, cache=True)
 def period_from_inertial(state: np.ndarray, gm: float = gm, max_time_sec: float = 10 * year_to_sec) -> float:
     """
     Computes the period of an orbit given its 3D state vector.
@@ -109,7 +109,7 @@ def period_from_inertial(state: np.ndarray, gm: float = gm, max_time_sec: float 
         return max_time_sec
 
 
-@njit
+@jit(nopython=True, cache=True)
 def inertial_to_local(state: np.ndarray, has_extra: bool = True) -> np.ndarray:
     """
     Convert two 2D state vectors from inertial frame to spacecraft frame, and pass back extra values.
@@ -128,7 +128,7 @@ def inertial_to_local(state: np.ndarray, has_extra: bool = True) -> np.ndarray:
         return np.array([r1, r2, v1, v2, th1, th2, al1, al2])
 
 
-@njit
+@jit(nopython=True, cache=True)
 def inertial_to_keplerian(state: np.ndarray, gm: float = gm) -> np.ndarray:
     """
     Convert two 2D state vectors plus mass and time from inertial to Keplerian frame. Specific implementation
@@ -169,7 +169,7 @@ def inertial_to_keplerian(state: np.ndarray, gm: float = gm) -> np.ndarray:
     return np.array([a1, a2, e1, e2, w1, w2, ta1, ta2, mr, tr])
 
 
-@njit
+@jit(nopython=True, cache=True)
 def inertial_to_local_2d(state: np.ndarray) -> np.ndarray:
     """
     Convert a 2D state vector from inertial to (r, theta) frame.
@@ -184,7 +184,7 @@ def inertial_to_local_2d(state: np.ndarray) -> np.ndarray:
     return np.array([r, v, th, al])
 
 
-@njit
+@jit(nopython=True, cache=True)
 def inertial_to_keplerian_2d(state: np.ndarray, gm: float = gm) -> np.ndarray:
     """
     Convert a 2D state vector from inertial to Keplerian
@@ -211,7 +211,7 @@ def inertial_to_keplerian_2d(state: np.ndarray, gm: float = gm) -> np.ndarray:
     return np.array([a, e, w, ta])
 
 
-@njit
+@jit(nopython=True, cache=True)
 def cross(left: np.ndarray, right: np.ndarray) -> np.ndarray:
     """
     Compute the cross product of two vectors.
@@ -225,7 +225,7 @@ def cross(left: np.ndarray, right: np.ndarray) -> np.ndarray:
     return np.array([x, y, z])
 
 
-@njit
+@jit(nopython=True, cache=True)
 def inertial_to_keplerian_3d(state: np.ndarray, gm: float = gm) -> np.ndarray:
     """
     Convert a 3D state vector from inertial to Keplerian
@@ -389,7 +389,7 @@ def keplerian_to_inertial_2d(state: np.ndarray, gm: float = gm, mean_or_true: st
     return np.hstack((r_i, v_i))
 
 
-@njit
+@jit(nopython=True, cache=True)
 def keplerian_to_mee_3d(state: np.ndarray) -> np.ndarray:
     """
     Convert a 3D state vector from Keplerian to Modified Equinoctial Elements
@@ -414,7 +414,7 @@ def keplerian_to_mee_3d(state: np.ndarray) -> np.ndarray:
     return np.array([p, f, g, h, k, el])
 
 
-@njit
+@jit(nopython=True, cache=True)
 def mee_to_keplerian_3d(state: np.ndarray) -> np.ndarray:
     """
     Convert a 3D state vector from Modified Equinoctial Elements to Keplerian
@@ -436,7 +436,7 @@ def mee_to_keplerian_3d(state: np.ndarray) -> np.ndarray:
     return np.array([a, e, i, w, om, v])
 
 
-@njit
+@jit(nopython=True, cache=True)
 def rotate_vnc_to_inertial_3d(vec: np.ndarray, state: np.ndarray) -> np.ndarray:
     """
     Rotates the current velocity vector to an inertial frame.
@@ -454,7 +454,7 @@ def rotate_vnc_to_inertial_3d(vec: np.ndarray, state: np.ndarray) -> np.ndarray:
     return np.dot(dcm, vec)
 
 
-@njit
+@jit(nopython=True, cache=True)
 def fix_angle(angle: float, upper_bound: float = np.pi, lower_bound: float = -np.pi) -> float:
     """
     Forces an angle to be within a set 2*pi radian window.
@@ -551,7 +551,7 @@ def min_energy_lambert(r0: np.ndarray, r1: np.ndarray, gm: float = gm) -> (np.nd
     return v0min, v1min, tof
 
 
-@njit
+@jit(nopython=True, cache=True)
 def c2(psi: float) -> float:
     """
     Helper function for vallado().
@@ -575,7 +575,7 @@ def c2(psi: float) -> float:
     return res
 
 
-@njit
+@jit(nopython=True, cache=True)
 def c3(psi: float) -> float:
     """
     Helper function for vallado().
@@ -937,7 +937,7 @@ def gamma_from_r_v(r_vec: np.ndarray, v_vec: np.ndarray) -> float:
     return gamma
 
 
-@njit
+@jit(nopython=True, cache=True)
 def mag2(array: np.ndarray) -> float:
     """
     Computes the magnitude of a 2-dimensional array.
@@ -947,7 +947,7 @@ def mag2(array: np.ndarray) -> float:
     return (array[0] * array[0] + array[1] * array[1]) ** 0.5
 
 
-@njit
+@jit(nopython=True, cache=True)
 def mag3(array: np.ndarray) -> float:
     """
     Computes the magnitude of a 3-dimensional array.
@@ -1102,7 +1102,7 @@ def rotate_vector_2d(vec: np.ndarray, angle: float) -> np.ndarray:
     return np.matmul(dcm, vec)
 
 
-@njit
+@jit(nopython=True, cache=True)
 def shift_vector_origin_single(cb1_to_sc: np.ndarray, cb2_to_cb1: np.ndarray) -> np.ndarray:
     """
     Change the central body by which a vector is defined.
@@ -1163,7 +1163,7 @@ def change_central_body(states: np.ndarray, times: np.ndarray, cur_cb: str, new_
     return new_states
 
 
-@njit
+@jit(nopython=True, cache=False)
 def mean_to_true_anomaly(m: float, e: float, tol: float = 1e-8) -> float:
     # Assume small eccentricity
     ea_guess = m
@@ -1403,13 +1403,13 @@ def raise_apoapsis(rp_cur: float, a_cur: float, ra_new: float, gm: float) -> flo
     return lower_apoapsis(rp_cur, a_cur, ra_new, gm)
 
 
-@njit
+@jit(nopython=True, cache=True)
 def v_from_gm_r_rp_gamma(gm: float, r: float, rp: float, gamma: float) -> float:
     assert r > rp, "Radius is smaller than the target periapsis."
     return (2 * gm * rp * (1 - rp / r) / (r * r * cos(gamma) ** 2 - rp * rp)) ** 0.5
 
 
-@njit
+@jit(nopython=True, cache=True)
 def v_from_gm_r_ra_gamma(gm: float, r: float, ra: float, gamma: float) -> float:
     assert r < ra, "Radius is greater than the target apoapsis."
     return (2 * gm * ra * (1 - ra / r) / (r * r * cos(gamma) ** 2 - ra * ra)) ** 0.5
