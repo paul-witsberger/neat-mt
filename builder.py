@@ -114,8 +114,9 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
                        'minlength': 0.1, 'headaxislength': 0, 'headlength': 0, 'headwidth': 0, 'color': arrow_color}
     ax.quiver(y[:-3, 0] / c.au_to_km, y[:-3, 1] / c.au_to_km, thrust_vec_inertial[:-2, 0], thrust_vec_inertial[:-2, 1],
               scale=q_scale_thrust, **quiver_opts)
-    ax.quiver(y[-2:, 0] / c.au_to_km, y[-2:, 1] / c.au_to_km, thrust_vec_inertial[-2:, 0], thrust_vec_inertial[-2:, 1],
-              scale=q_scale_capture, **quiver_opts)
+    if config.do_terminal_lambert_arc:
+        ax.quiver(y[-2:, 0] / c.au_to_km, y[-2:, 1] / c.au_to_km, thrust_vec_inertial[-2:, 0], thrust_vec_inertial[-2:, 1],
+                  scale=q_scale_capture, **quiver_opts)
 
     # Plot Mars after the capture
     tf_jc = (times[-1] - times[-3]) * tc.tu * c.sec_to_day * c.day_to_jc + tc.times_jd1950_jc[-1]
@@ -162,7 +163,7 @@ def make_last_traj(print_mass: bool = True, save_traj: bool = True, neat_net: bo
     if neat_net:
         ext = 'default' if config_name is None else config_name
         fname = 'winner_' + ext
-        fname = 'winner_tmp'
+        # fname = 'winner_tmp'
     else:
         fname = 'lgen.pkl'
     # Run
@@ -208,7 +209,8 @@ def make_neat_network_diagram(config_name=None):
     if sys() == 'Linux':
         return
     # Load network
-    ext = 'tmp' if config_name is None else config_name
+    # ext = 'tmp' if config_name is None else config_name
+    ext = 'tmp'
     with open('results//winner_' + ext, 'rb') as f:
         winner = pickle.load(f)
 
@@ -252,10 +254,13 @@ def make_neat_network_diagram(config_name=None):
                              1: '<&#946;>',  # beta, thrust angle (lat)
                              2: '<&#932;>'}  # Tau, throttle
 
+    _hidden_node_names = {k: v.activation + '_' + str(k) for k, v in winner.nodes.items() if k > tc.n_outputs - 1}
+
     # Define node names
     node_names = _node_input_names_2d if tc.n_dim == 2 else _node_input_names_3d
     node_names = {-i-1: node_names[-key-1] for i, key in enumerate(tc.input_indices)}
     node_names.update(_node_output_names_2d if tc.n_outputs == 2 else _node_output_names_3d)
+    node_names.update(_hidden_node_names)
 
     # Draw network (remove disabled and unused nodes/connections)
     visualize.draw_net(config, winner, node_names=node_names, filename="results//winner-diagram.gv",

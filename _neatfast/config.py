@@ -134,12 +134,11 @@ class Config(object):
     """A simple container for user-configurable parameters of NEAT."""
 
     __params = [ConfigParameter('pop_size', int),
-                ConfigParameter('fitness_criterion', str),
-                ConfigParameter('fitness_threshold', float),
+                ConfigParameter('fitness_criterion', str, 'mean'),
+                ConfigParameter('fitness_threshold', float, 0.),
                 ConfigParameter('reset_on_extinction', bool),
-                ConfigParameter('no_fitness_termination', bool, False),
+                ConfigParameter('no_fitness_termination', bool, True),
                 ConfigParameter('fitness_plot_frequency', int, 1000),
-                ConfigParameter('num_nodes', int, 100),
                 ConfigParameter('num_cases', int, 1),
                 ConfigParameter('do_terminal_lambert_arc', bool, None),
                 ConfigParameter('missed_thrust_allowed', bool, False),
@@ -149,7 +148,6 @@ class Config(object):
     def __init__(self, genome_type, reproduction_type, species_set_type, stagnation_type, filename):
         # Check that the provided types have the required methods.
         self.num_cases = None
-        self.num_nodes = None
         self.missed_thrust_rd_factor = None
         self.missed_thrust_tbe_factor = None
         self.missed_thrust_allowed = None

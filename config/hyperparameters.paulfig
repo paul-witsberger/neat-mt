@@ -1,0 +1,137 @@
+crossover type # [random linear combo of parents, one parent or the other]
+# I think that having the linear combo will help the weights/biases "optimize" instead of relying on landing
+# on the correct choice
+
+pop_size = 500  # [500, 750, 1000, 1250, 1500, 2000, 2500, 3000, 4000, 5000, 10000]
+# higher population size means better chance of having a good initial guess, but at the cost of runtime
+# so either it will take longer to go through a set number of generations or less generations will be run
+# --> it seems like pop_size needs to be big enough, but after a certain point it becomes burdensome to the runtime
+# -->    and prohibits the number of generations that can be run
+
+num_cases = 35  # [5, 10, 15, 20, 25, 30, 35, 40, 50, 75, 100, 250]
+# a higher number of missed-thrust cases will lead to a better average performance and reduce dependence on outliers
+# at the cost of higher runtime
+
+do_terminal_lambert_arc = True  # [True, False]
+# Would it be useful to turn this off at any point? Early on, or at the very end?
+
+missed_thrust_allowed = True  # [True, False]
+# Would it be useful to turn this off at the beginning?
+
+missed_thrust_tbe_factor = 0.5   # [0.333, 0.5, 0.75, 1.0, 1.5]
+# Lower time-between-events value means more common missed-thrust events. Below around 0.333 starts having a
+# much bigger runtime impact.
+
+missed_thrust_rd_factor = 2  # [0.75, 1.0, 1.5, 2.0, 3.0]
+# Higher recovery duration means each outage will last longer.
+
+num_inputs = 12  # [10, 12, 14]
+# Neural network inputs - 10 is for 2D (4 + 4 +2), 12 is for 3D but ignoring some (5 + 5 + 2),
+# 14 is for pure 3D (6 + 6 + 2)
+
+num_hidden = 3  # [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 30, 50, 100]
+# Number of initial hidden nodes - according to NEAT paper, should start with none and grow to build up complexity.
+# However, sometimes this gets network stuck in an overly simplistic local min, so starting with more may be necessary.
+
+num_outputs = 2  # [2, 3, higher (for categorical)]
+# 2 for 2D, 3 for 3D, more if doing categorical output for multiple angle selection
+
+initial_connection = partial_direct 0.8 # [partial, full] x [direct, nodirect] x [0.1, 0.3, 0.5, 0.8, 1.0]
+# number of connections between nodes - partial and corresponding fraction represent ratio of possible connections that
+# exist, vs full which connects every input node to every other node. direct means input nodes can connect directly to
+# output nodes and to hidden nodes, nodirect means inputs can only connect to hidden nodes
+
+compatibility_disjoint_coefficient = 1.0  # [0.6, 1.0, 1.5]
+# Affects the distance calculation in Genome; disjoint genes are ones that one parent has and the other does not.
+# A higher value will make disjoint genes have a larger distance from each other
+
+compatibility_weight_coefficient = 0.6  # [0.1, 0.6, 1.0]
+# Affects the distance calculation in NodeGene and ConnectionGene. A higher value will make disparities in weights/biases
+# have a larger distance
+
+conn_add_prob = 0.005  # [0, 0.001, 0.005, 0.01]
+# Higher value makes it more likely to add a connection between existing nodes
+
+conn_delete_prob = 0.005  # [0, 0.001, 0.005, 0.01]
+# Higher value makes it more likely to remove connections; the networks tend to find the "easy" local mins that only
+# have a few to none hidden nodes, so this likely should be pretty small
+
+node_add_prob = 0.005  # [0, 0.001, 0.005, 0.01]
+# Higher value makes it more likely to add a new node along an existing connection
+
+node_delete_prob = 0.005  # [0, 0.001, 0.005, 0.01]
+# Higher value makes it more likely to remove an existing node
+
+activation_default = tanh   # [tanh, relu, random]
+# tanh is probably better for small networks, and doesn't suffer from backprop penalty
+
+activation_default_out = clamped  # [clamped, sigmoid, categorical]
+# clamped seems to be better than sigmoid; categorical is also decent but has limits possible output angles
+
+activation_options = tanh sigmoid relu sin gauss step selu  # any/all of [tanh, sigmoid, relu, sin, gauss, step, selu]
+# tanh and relu are workhorses; could think of removing sigmoid; maybe do a test of only sin, gauss, and step to see
+# how they do - if they do okay, keep them and if not remove them
+
+activation_mutate_rate = 0.0025  # [0, 0.001, 0.0025, 0.005, 0.01]
+# higher value is more likely to change the activation function within hidden nodes
+
+bias_max_value = 1.5  # [0.1, 0.5, 1.0, 1.5, 2.0, 5.0]  -  depends on number of nodes
+bias_min_value = -1.5
+# Bounds on the range of value of biases. Smaller number of nodes connections can probably tolerate a wider range
+
+bias_init_stdev = 0.4  # [0.1, 0.4, other]
+# One standard deviation of the initial bias values. Depends on the min/max bias values. Could look into "proper"
+# values for initialization
+
+bias_mutate_rate = 0.1  # [0.1...0.1...0.8]  -  depends on stage/strategy
+# One standard deviation of the amount by which the bias is mutated. 
+
+bias_replace_rate = 0.005  # [0.001, 0.005, 0.01, 0.05, 0.1]  -  depends on stage/strategy
+# Rate at which biases are completely swapped out.
+
+bias_mutate_power = 0.05  # between [0.01, 0.5]  -  depends on stage/strategy
+# Standard deviation of the amount by which the biases are mutated.
+
+weight_max_value = 1.5  # [0.1, 0.5, 1.0, 1.5, 2.0, 5.0]  -  depends on number of nodes
+weight_min_value = -1.5
+# Bounds on the range of possible weights. Smaller number of nodes can probably tolerate a wider range.
+
+weight_init_stdev = 0.1  # [0.1, 0.4, other]  -  depends on stage/strategy  -  look into proper initialization
+# Standard deviation of the initial weight values. Should be adjusted based on the min/max weight values.
+# Could look into "proper" values for initialization.
+
+weight_mutate_rate = 0.2  # [0.001, 0.005, 0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]  -  depends on stage/strategy
+# Probability of a weight being mutated.
+
+weight_replace_rate = 0.005  # [0.001, 0.005, 0.01, 0.05, 0.1]  -  depends on stage/strategy
+# Probability of a weight being replaced with a new value.
+
+weight_mutate_power = 0.1  # between [0.01, 0.5]  -  depends on stage/strategy and weight range
+# Standard deviation of the amount by which a weight is mutated.
+
+enabled_mutate_rate = 0  # [0, 0.0001, 0.001]  -  go back and see what this value was originally
+# Probability of a connection being disabled/enabled.
+
+compatibility_threshold = 2.9  # depends on number of hidden nodes, compatibility coefficients, and weight range
+# Sets the limit on distance between genomes for what can be considered in the same species. Having more nodes within
+# a network means more weights, which means more distance, so the threshold would need to be increased to prevent
+
+species_fitness_func = max  # [max, mean]
+# Specifies whether the representative from each species is its best (max) or average (mean). Perhaps early in training
+# this could be max, whereas later in training it could be mean.
+
+max_stagnation = 50  # [20...5...50...10...100]
+# number of generations without improvement before a species is removed. Early in training it would be appropriate to
+# have more turnover, whereas later in training species should have more protection
+
+elitism = 2  # [0, 1, 2, 3, 4, 5]
+# number of individuals from each species to carry directly to the next generation
+
+survival_threshold = 0.8  # [0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+# sets a performance threshold for which individuals within a species are eligible to make it to the next generation.
+# This is the top fraction of the population, e.g. 0.8 means the best 80% of individuals are eligible to be parents
+
+
+
+# on the order of 1e24 to enumerate every option
+# 36 variables on this list

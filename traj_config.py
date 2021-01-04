@@ -63,7 +63,9 @@ isp_chemical = 370  # for the final correction burns
 # Specify the indices of the input array that should be used
 # input_indices = np.array([0, 1, 2, 3, 8, 9])  # ignore target, 2D [6 nodes]
 # input_indices = np.array([0, 1, 3, 4, 6, 7, 9, 10, 12, 13])  # inertial inputs, ignore Z components, 3D [10 nodes]
-input_indices = np.array([0, 1, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13])  # keplerian inputs, ignore inclination [12 nodes]
+# input_indices = np.array([0, 1, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13])  # keplerian inputs, ignore inclination [12 nodes]
+# input_indices = np.array([0, 1, 3, 4, 5, 12, 13])  # keplerian inputs, ignore inclination, target [7]
+input_indices = np.array([12, 13])
 # input_indices = None  # all
 n_outputs = 2
 
@@ -113,17 +115,17 @@ n_steps = 20      # substeps between two nodes
 
 # Choose to add a penalty for going too close to the central body in the fitness function
 rp_penalty = True
-min_allowed_rp = c.a_earth_km * 0.95
+min_allowed_rp = c.a_earth_km * 0.9
 rp_penalty_multiplier = 10000
 
 # Choose to add a penalty for not thrusting at all (just staying in initial orbit)
 no_thrust_penalty = True
 
 # Choose a penalty for trajectories that leave the allowable zone
-big_penalty = 10000
+big_penalty = 20000
 
 # Choose maximum energy to allow before stopping integration
-max_energy = - c.u_sun_km3s2 / 2 / max(a0_max, af_max) * 0.8
+max_energy = - c.u_sun_km3s2 / 2 / max(a0_max, af_max) * 0.5
 min_energy = - c.u_sun_km3s2 / 2 / min(a0_min, af_min) * 1.2
 
 # Choose whether missed thrust events occur or not, and scale time-between-events and recovery-duration

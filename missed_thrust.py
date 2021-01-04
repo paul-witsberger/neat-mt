@@ -11,6 +11,7 @@ from numba import njit, jit
 from traj_config import gm, ind_dim
 from constants import au_to_km
 import warnings
+import time
 
 
 # Create 2-body integrator object and lambert function
@@ -67,7 +68,6 @@ def eval_traj_neat(genome: neat.genome.DefaultGenome, config: neat.config.Config
 
         # # Get target final state
         yf_actual = y[-3, tc.ind_dim]
-        # yf_actual[tc.n_dim:] -= dv1[:tc.n_dim]
         yf_target = yf[tc.ind_dim[:-1]]
 
         # Calculate final propellant mass ratio and final time ratio
@@ -151,30 +151,37 @@ def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float,
     ra2 = a2 * (1 + e2)
 
     # Calculate error in states
-    dr_tol_close = 0.00385 * au_to_km / tc.a0_max  # TODO where does 0.00385 come from?
-    dr_tol_far = 0.3 * au_to_km / tc.a0_max  # TODO where does 0.3 come from?
+    dr_tol_close = c.r_soi_mars / c.au_to_km
+    dr_tol_far = 50 * dr_tol_close
     yf_mag = ou.mag3(yf[tc.n_dim:])
     # dv_tol = 0.241 / yf_mag
-    dr = ou.mag3(yf[:tc.n_dim] - y[:tc.n_dim]) / tc.a0_max  # TODO if 2D, would need mag2 instead of mag3
+    dr = ou.mag3(yf[:tc.n_dim] - y[:tc.n_dim]) / c.au_to_km  # TODO if 2D, would need mag2 instead of mag3
     dv = ou.mag3(yf[tc.n_dim:] - y[tc.n_dim:]) / yf_mag
     drp = abs(rp2 - rp1) / tc.a0_min
     dra = abs(ra2 - ra1) / tc.a0_min
     dw = abs(ou.fix_angle(w2 - w1, np.pi, -np.pi) / np.pi)
     df = abs(ou.fix_angle(f2 - f1, np.pi, -np.pi) / np.pi)
     penalty = np.empty(4)
+    close = False
     if dr > dr_tol_far:
         # Far away
-        penalty[:] = 100
-        # penalty = np.array([100, 100, 80, 80])
+        # penalty[:] = 100
+        penalty = np.array([100, 100, 100, 100], dtype=np.float64)
+        # penalty = np.array([100, 100, 80, 80], dtype=np.float64)
         states = np.array([drp, dra, dw, df])
     else:
-        states = np.array([drp, dra, dr, dv])
-        if dr < dr_tol_close:
+        states = np.array([drp, dra, dw, df, dr, dv])
+        # states = np.array([drp, dra, dw, df])
+        if dr < dr_tol_close:  # TODO dr is scaled differently from the value to compute "close capture"
+            # print('dr = %.3e AU' % dr)
+            close = True
             # Within sphere-of-influence
-            penalty[:] = 10
+            # penalty[:] = 0
+            penalty = np.array([0, 0, 0, 0, 0, 0], dtype=np.float64)
         else:
             # Intermediate
-            penalty[:] = 50
+            # penalty[:] = 50
+            penalty = np.array([20, 20, 20, 20, 50, 50], dtype=np.float64)
 
     # Set cost function based on final trajectory type
     if tc.elliptical_final:
@@ -188,9 +195,9 @@ def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float,
     squares = np.square(weighted)
     abses = np.abs(weighted)
     f = 0.
-    for i in range(4):
+    for i in range(len(states)):
         f += max(squares[i], abses[i])
-    f += m_ratio * mass_weight + t_ratio * time_weight + penalty[0]
+    f += m_ratio * mass_weight + t_ratio * time_weight + np.sum(penalty)
 
     # Penalize going too close to central body
     if tc.rp_penalty:
@@ -205,7 +212,7 @@ def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float,
         f += dy0
 
     # Dimensionalize error values
-    dr *= tc.a0_max
+    dr *= c.au_to_km
     dv *= yf_mag
 
     if np.isnan(f):
@@ -222,6 +229,11 @@ def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float,
         print('t_ratio = ')
         print(t_ratio)
         print('*' * 50 + '\n\n')
+    # if close:
+    # 	print('Close capture: f = %f' % f)
+    # 	print('m_ratio = %f' % m_ratio)
+    # 	print('t_ratio = %f' % t_ratio)
+    # 	time.sleep(5)
     return f, dr, dv
 
 
@@ -259,10 +271,11 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
     # Define flag for missed thrust
     if config.missed_thrust_allowed:
         outages = calc_mtes_v2(tc.tf, tc.t0, config.missed_thrust_tbe_factor, config.missed_thrust_rd_factor)
-        if outages.shape == (0, 0):
-            outages = np.array([[], []], dtype=np.float64)
+        # if outages.shape == (0, 0):
+        #     outages = np.array([[], []], dtype=np.float64)
     else:
-        outages = np.array([[]], dtype=np.float64)
+        # outages = np.array([[], []], dtype=np.float64)
+        outages = np.array([], dtype=np.float64).reshape(0, 2)
 
     # Create array of thrust segments based on outages
     times, is_outage = build_time_array(outages)
@@ -340,38 +353,49 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
             change_frame = False
         else:
             print('Performing close capture')
+            # TODO change ou._in_current's final output (TOF) to be in days, not seconds
             maneuvers = ou._in_current(state_rel, tc.capture_periapsis_radius_km, tc.capture_period_day * c.day_to_sec,
                                        tc.gm_target, tc.capture_low_not_high)
+            maneuvers[-1] = 0.
             state_f = state_rel
             gm_capture = tc.gm_target
             change_frame = True
         times[-1] += maneuvers[-1] * c.day_to_sec / tc.tu
 
         if save_full_traj:
-            # Compute the intermediate states of the capture
-            y_capture, full_traj_capture = ou.propagate_capture(maneuvers, state_f, mf, du=ou.mag3(state_f[:3]),
-                                                                gm=gm_capture)
-            full_traj_capture[:, 0] += times[-2]  # add the time of the transfer to the time of capture
-            ti_capture = full_traj_capture[:, 0]
+            if not change_frame:
+                # Compute the intermediate states of the capture
+                y_capture, full_traj_capture = ou.propagate_capture(maneuvers, state_f, mf, du=ou.mag3(state_f[:3]),
+                                                                    gm=gm_capture)
+                full_traj_capture[:, 0] += times[-2]  # add the time of the transfer to the time of capture
+                ti_capture = full_traj_capture[:, 0]
 
             # Lambert arc is in heliocentric frame, other captures are in target body centric frame
-            if change_frame:
+            else:
                 print('Changing frame')
-                # Compute states of target body (Mars) relative to sun throughout the capture
-                state_sun_mars = c.ephem(['a', 'e', 'i', 'w', 'O', 'M'], [tc.target_body],
-                                         ti_capture + tc.times_jd1950_jc[-1])
-                state_sun_mars = ou.keplerian_to_inertial_3d(state_sun_mars, gm=tc.gm, mean_or_true='mean')
+                # raise NotImplementedError('Haven''t fixed the "Changing frame" part of the code yet.')
+                # # Compute states of target body (Mars) relative to sun throughout the capture
+                # state_sun_mars = c.ephem(['a', 'e', 'i', 'w', 'O', 'M'], [tc.target_body],
+                #                          ti_capture + tc.times_jd1950_jc[-1])
+                # state_sun_mars = ou.keplerian_to_inertial_3d(state_sun_mars, gm=tc.gm, mean_or_true='mean')
 
-                # Pull out indices of full_traj_capture corresponding to y_capture
-                if full_traj_capture.shape[0] == 2 * tc.n_terminal_steps + 1:
-                    state_sun_mars_y_ind = state_sun_mars[np.array([0, tc.n_terminal_steps,
-                                                                    2 * tc.n_terminal_steps])].astype(int)
-                else:
-                    state_sun_mars_y_ind = state_sun_mars[np.array([0, tc.n_terminal_steps])].astype(int)
+                # # Pull out indices of full_traj_capture corresponding to y_capture
+                # if full_traj_capture.shape[0] == 2 * tc.n_terminal_steps + 1:
+                #     state_sun_mars_y_ind = state_sun_mars[np.array([0, tc.n_terminal_steps,
+                #                                                     2 * tc.n_terminal_steps])].astype(int)
+                # else:
+                #     state_sun_mars_y_ind = state_sun_mars[np.array([0, tc.n_terminal_steps])].astype(int)
 
-                # Add relative states to Mars' states
-                y_capture[:, :6] += state_sun_mars_y_ind
-                full_traj_capture[:, 1:-1] += state_sun_mars
+                # # Add relative states to Mars' states
+                # y_capture[:, :6] += state_sun_mars_y_ind
+                # full_traj_capture[:, 1:-1] += state_sun_mars
+                dv1_mag = ou.mag3(maneuvers[0])
+                dv2_mag = ou.mag3(maneuvers[1])
+                m1 = y[-3, -1] / np.exp(dv1_mag * 1000 / c.g0_ms2 / tc.isp_chemical)
+                m2 = m1 / np.exp(dv2_mag * 1000 / c.g0_ms2 / tc.isp_chemical)
+                y_capture = np.vstack((y[-3], y[-3]))
+                y_capture[:, -1] = m1, m2
+                full_traj_capture = full_traj[-1].reshape((1, -1))
 
             # Append capture states to main array of states
             y[-2:] = y_capture
@@ -379,6 +403,8 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
 
         else:
             tof_capture, mf = ou.get_capture_final_values(maneuvers, mf)
+            if change_frame:
+                tof_capture = 0.
             if np.isnan(mf):
                 print('\n\n' + '*' * 50)
                 print('FINAL MASS IS NAN')
@@ -439,7 +465,7 @@ def calc_mtes_v2(tf: float, t0: float = 0., tbe_factor: float = 1., rd_factor: f
         # Check if the next event happens before the end of the time of flight
         if prev_start + time_between_events < tf:
             recovery_duration = np.random.weibull(k_rd) * lambda_rd * day_to_sec  # calculate the recovery duration
-            recovery_duration += (np.random.rand() * max_discovery_delay_days * day_to_sec) + \
+            recovery_duration = recovery_duration + (np.random.rand() * max_discovery_delay_days * day_to_sec) + \
                                  (op_recovery_days * day_to_sec)  # discovery delay and operational recovery
             if cascading:
                 outages[-1][1] = outages[-1][0] + time_between_events + recovery_duration
@@ -456,30 +482,38 @@ def calc_mtes_v2(tf: float, t0: float = 0., tbe_factor: float = 1., rd_factor: f
 
 @jit(nopython=True, cache=True)
 def build_time_array(outages):
-    times = [0.]
-    is_outage = list()
     outages_remaining = outages.shape[0]
-    while True:
-        # Check if we should keep going
-        if times[-1] < tc.tf:
-            if times[-1] + tc.segment_duration_sec < tc.tf:
-                next_time = times[-1] + tc.segment_duration_sec
+    is_outage = [False]
+    if outages_remaining == 0:
+        times = np.empty(int(tc.tf / tc.segment_duration_sec) + 4)
+        times[:-3] = np.arange(0, tc.tf, tc.segment_duration_sec) / tc.tu
+        times[-3:] = tc.tf / tc.tu
+        is_outage = [False] * (times.shape[0] - 3)
+        return times, is_outage
+    else:
+        _times = [0.]
+        is_outage.pop()
+        while True:
+            # Check if we should keep going
+            if _times[-1] < tc.tf:
+                if _times[-1] + tc.segment_duration_sec < tc.tf:
+                    next_time = _times[-1] + tc.segment_duration_sec
+                else:
+                    next_time = tc.tf
+                # Check if we need to add a partial or a full segment
+                if outages_remaining > 0 and outages[-outages_remaining, 0] < next_time:
+                    _times.append(outages[-outages_remaining, 0])
+                    _times.append(outages[-outages_remaining, 1])
+                    outages_remaining -= 1
+                    is_outage.append(False)
+                    is_outage.append(True)
+                else:
+                    _times.append(next_time)
+                    is_outage.append(False)
             else:
-                next_time = tc.tf
-            # Check if we need to add a partial or a full segment
-            if outages_remaining > 0 and outages[-outages_remaining, 0] < next_time:
-                times.append(outages[-outages_remaining, 0])
-                times.append(outages[-outages_remaining, 1])
-                outages_remaining -= 1
-                is_outage.append(False)
-                is_outage.append(True)
-            else:
-                times.append(next_time)
-                is_outage.append(False)
-        else:
-            times.append(times[-1])
-            times.append(times[-1])
-            return np.array(times) / tc.tu, is_outage
+                _times.append(_times[-1])
+                _times.append(_times[-1])
+                return np.array(_times) / tc.tu, is_outage
 
 
 def _update_params(thrust):
@@ -517,7 +551,7 @@ def calculate_missed_thrust_events(ti: np.ndarray, tbe_factor=1.0, rd_factor=1.0
         if t < tf:  # check if the next event happens before the end of the time of flight
             # while True:
             recovery_duration = np.random.weibull(k_rd) * lambda_rd * day_to_sec  # calculate the recovery duration
-            recovery_duration += (np.random.rand() * max_discovery_delay_days * day_to_sec) + \
+            recovery_duration = recovery_duration + (np.random.rand() * max_discovery_delay_days * day_to_sec) + \
                                  (op_recovery_days * day_to_sec)  # discovery delay and operational recovery
             start = find_nearest(ti, t)
             stop = max(start + 1, find_nearest(ti, t + recovery_duration))

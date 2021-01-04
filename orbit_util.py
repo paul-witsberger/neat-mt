@@ -2697,6 +2697,7 @@ def _in_current(state_0: np.ndarray, rp_target: float, per_target: float, gm: fl
             else:
                 maneuvers = [dv1_vec, dv2_vec, tof12]
 
+    maneuvers[-1] *= c.sec_to_day
     return maneuvers
 
 

@@ -95,7 +95,7 @@ class BaseGene(object):
 class DefaultNodeGene(BaseGene):
     _gene_attributes = [FloatAttribute('bias'),
                         FloatAttribute('response'),
-                        StringAttribute('activation', options='sigmoid'),
+                        StringAttribute('activation', options='tanh'),
                         StringAttribute('aggregation', options='sum')]
 
     def __init__(self, key):

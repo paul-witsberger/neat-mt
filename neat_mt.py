@@ -25,7 +25,7 @@ def run(config_name='default', init_state=None, parallel=True, max_gens=traj_con
     # Run
     if parallel:
         num_workers = os.cpu_count() - 1
-        timeout = 1
+        timeout = 1.5
         pe = neat.ParallelEvaluator(num_workers, eval_traj_neat, timeout=timeout)
         winner, best_pop = pop.run(pe.evaluate, n=max_gens, num_workers=num_workers)
     else:
@@ -48,8 +48,11 @@ def run(config_name='default', init_state=None, parallel=True, max_gens=traj_con
     visualize.plot_stats(stats, ylog=True, filename="results//fitness_history_" + config_name + ".svg")
     visualize.plot_species(stats, filename="results//speciation_history_" + config_name + ".svg")
     make_neat_network_diagram(config_name=config_name)
-    make_last_traj(print_mass=True, config_name=config_name)
-
+    try:
+        make_last_traj(print_mass=True, config_name=config_name)
+    except NotImplementedError:
+        pass
+    
     return pop
 
 
@@ -67,7 +70,7 @@ if __name__ == '__main__':
     # NOTE add -OO to configuration when running for slight speed improvement
     _get_timing = False
     _parallel = True
-    _max_gens = [5, 5, 5]
+    _max_gens = [0, 200, 0]
     pop = None
 
     t_start = time.time()
