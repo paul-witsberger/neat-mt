@@ -765,7 +765,7 @@ def lambert_min_dv(gm: float, state_0: np.ndarray, t0: float, low: float, high: 
 
     # if min_dv_s < min_dv_l:
     tof_of_min_dv = tof_of_min_dv_s
-    short = True
+    #     short = True
     # else:
     #     tof_of_min_dv = tof_of_min_dv_l
     #     short = False

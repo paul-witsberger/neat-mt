@@ -1,14 +1,14 @@
-# NEAT configuration for the bit-sequence memory experiment.
-
 # The `NEAT` section specifies parameters particular to the NEAT algorithm
 # or the experiment itself.  This is the only required section.
 [NEAT]
 pop_size               = 500
 reset_on_extinction    = 0
 fitness_plot_frequency = 10
-num_cases = 1
+fitness_criterion = mean
+fitness_threshold = 0
+num_cases = 20
 do_terminal_lambert_arc  = False
-missed_thrust_allowed    = False
+missed_thrust_allowed    = True
 missed_thrust_tbe_factor = 1.0
 missed_thrust_rd_factor  = 1.0
 
@@ -16,7 +16,7 @@ missed_thrust_rd_factor  = 1.0
 num_inputs              = 7
 num_hidden              = 3
 num_outputs             = 2
-initial_connection      = partial_direct 0.8
+initial_connection      = full_nodirect
 feed_forward            = True
 # TODO tinker with these
 compatibility_disjoint_coefficient = 1.0
@@ -73,4 +73,4 @@ max_stagnation = 30
 
 [DefaultReproduction]
 elitism            = 1
-survival_threshold = 0.5
+survival_threshold = 0.6

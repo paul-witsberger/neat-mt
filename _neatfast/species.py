@@ -139,7 +139,12 @@ class DefaultSpeciesSet(DefaultClassConfig):
             'Mean genetic distance {0:.3f}, standard deviation {1:.3f}'.format(gdmean, gdstdev))
 
     def get_species_id(self, individual_id):
-        return self.genome_to_species[individual_id]
+        try:
+            return self.genome_to_species[individual_id]
+        except KeyError as e:
+            print(('\n' * 5 + 'KeyError: {}\nNow printing DefaultSpeciesSet.genome_to_species' + '\n' * 5).format(individual_id))
+            [print('%d: %d' % (g, s)) for g, s in self.genome_to_species.items()]
+            raise e
 
     def get_species(self, individual_id):
         sid = self.genome_to_species[individual_id]

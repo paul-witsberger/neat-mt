@@ -3,17 +3,17 @@
 # NOTE:		cmake --build . --config Release --target install
 
 # Set up
-cmake_minimum_required(VERSION 3.12.0)
+cmake_minimum_required(VERSION 3.20.0)
 PROJECT (boost_tbp)
 
 # Specify relevant paths
-set(PYTHON_VERSION 36)
-set(BOOST_ROOT "C:/Users/pawit/Documents/boost/boost_1_73_0")
-set(PYTHON_ROOT "C:/Program Files/Python36")
-set(VALLADO_ROOT "C:/Users/pawit/Documents/codes/src/vallado")
-set(BIN_ROOT "C:/Users/pawit/Documents/codes/boost_tbp_bin")
-set(LOCAL_PYTHON_ENV "C:/Users/pawit/Documents/research_env/Lib/site-packages/boost_tbp")
-set(SOURCE_DIR "C:/Users/pawit/OneDrive/Documents/Classes/Research/neat-mt")
+set(PYTHON_VERSION 38)
+set(BOOST_ROOT "C:/Users/Paul/Documents/codes/boost_1_73_0")
+set(PYTHON_ROOT "C:/Program Files/Python38")
+set(VALLADO_ROOT "C:/Users/Paul/Documents/codes/src/vallado")
+set(BIN_ROOT "C:/Users/Paul/Documents/codes/boost_tbp_bin")
+set(LOCAL_PYTHON_ENV "C:/Users/Paul/Documents/research_env/Lib/site-packages/boost_tbp")
+set(SOURCE_DIR "C:/Users/Paul/OneDrive/Documents/Classes/Research/neat-mt")
 
 # Define Include and Link libraries
 set(BOOST_INCLUDE_DIR ${BOOST_ROOT})

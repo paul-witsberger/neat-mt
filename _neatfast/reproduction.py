@@ -136,7 +136,7 @@ class DefaultReproduction(DefaultClassConfig):
         # Isn't the effective min_species_size going to be max(min_species_size,
         # self.reproduction_config.elitism)? That would probably produce more accurate tracking
         # of population sizes and relative fitnesses... doing. TODO: document.
-        min_species_size = max(min_species_size,self.reproduction_config.elitism)
+        min_species_size = max(min_species_size, self.reproduction_config.elitism)
         spawn_amounts = self.compute_spawn(adjusted_fitnesses, previous_sizes,
                                            pop_size, min_species_size)
 
@@ -172,15 +172,16 @@ class DefaultReproduction(DefaultClassConfig):
             repro_cutoff = max(repro_cutoff, 2)
             old_members = old_members[:repro_cutoff]
 
+            # PAUL EDIT #
+            # create a probability vector based on fitness
+            p = np.array([old_members[i][1].fitness for i in range(len(old_members))])
+            p = np.exp(p / -p[0] / 10)
+            p /= np.sum(p)
+
             # Randomly choose parents and produce the number of offspring allotted to the species.
             while spawn > 0:
                 spawn -= 1
 
-                # PAUL EDIT #
-                # create a probability vector based on fitness
-                p = np.array([old_members[i][1].fitness for i in range(len(old_members))])
-                p = np.exp(p / -p[0])
-                p /= np.sum(p)
                 parent1_id, parent1 = old_members[np.random.choice(len(old_members), p=p)]
                 parent2_id, parent2 = old_members[np.random.choice(len(old_members), p=p)]
                 # END PAUL EDIT #

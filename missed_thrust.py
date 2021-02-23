@@ -17,8 +17,8 @@ import time
 # Create 2-body integrator object and lambert function
 tbp = boost_tbp.TBP()
 lambert = boost_tbp.maneuvers().lambert
-year_to_sec = c.year_to_sec
-day_to_sec = c.day_to_sec
+year_to_sec: float = c.year_to_sec
+day_to_sec: float = c.day_to_sec
 
 
 def eval_traj_neat(genome: neat.genome.DefaultGenome, config: neat.config.Config) -> float:
@@ -33,17 +33,6 @@ def eval_traj_neat(genome: neat.genome.DefaultGenome, config: neat.config.Config
     nc = Neurocontroller.init_from_neat_net(net, tc.scales_in, tc.scales_out)
     thrust_fcn = nc.get_thrust_vec_neat
 
-    if config.do_terminal_lambert_arc is None:
-        _do_capture = tc.do_terminal_lambert_arc
-    else:
-        _do_capture = config.do_terminal_lambert_arc
-    # Define times
-    # ti = np.empty(config.num_nodes + 2)
-    # # ti = np.power(np.linspace(0, 1, num_nodes), 3 / 2) * (tf - t0) + t0
-    # ti[:-2] = np.linspace(tc.t0, tc.tf, config.num_nodes)
-    # ti[-2:] = ti[-3]
-    # ti /= tc.tu
-
     # Initialize score vector
     f = np.empty(config.num_cases)
     f[:] = np.infty
@@ -51,14 +40,13 @@ def eval_traj_neat(genome: neat.genome.DefaultGenome, config: neat.config.Config
     # Main loop - evaluate network on "num_cases" number of random cases
     for i in range(config.num_cases):
         # Create a new case based on the given boundary condition boundary conditions
-        _y0, yf = compute_bcs()  # formerly make_new_bcs()
+        _y0, yf = compute_bcs()
 
         # Append mass to initial state
         y0 = np.empty(len(_y0) + 1)
         y0[:-1], y0[-1] = _y0, tc.m0
 
         # Integrate trajectory
-        # y, miss_ind, full_traj, maneuvers = integrate_func_missed_thrust(thrust_fcn, y0, ti, yf, config)
         y, times, is_outage, full_traj, maneuvers = integrate_func_missed_thrust(thrust_fcn, y0, yf, config)
 
         # Check if integration was stopped early - if so, assign a large penalty
@@ -89,14 +77,15 @@ def eval_traj_neat(genome: neat.genome.DefaultGenome, config: neat.config.Config
             f_std = np.std(f)
             f = alpha * f_mean + (1 - alpha) * f_std
 
-        # TODO Reliability-Based Design Optimization
+        # Reliability-Based Design Optimization
         elif rbdo:
-            raise NotImplementedError('RBDO has not been implemented yet - need to determine how to compute cases that'
-                                      ' are "outside bounds".')
-            # f_mean = np.mean(f)
-            # f_constraint_violation = num_cases_outside_bounds / config.num_cases
-            # c = 100.
-            # f = f_mean + c * f_constraint_violation
+            f_threshold = 10
+            cases_outside_bounds = f[f >= f_threshold]
+            num_cases_outside_bounds = len(cases_outside_bounds)
+            f_mean = np.mean(f)
+            f_constraint_violation = num_cases_outside_bounds / config.num_cases
+            c = 100.
+            f = f_mean + c * f_constraint_violation
 
         # Mean
         elif normal:
@@ -201,7 +190,6 @@ def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float,
 
     # Penalize going too close to central body
     if tc.rp_penalty:
-        # if rp1 < tc.min_allowed_rp:
         f += tc.rp_penalty_multiplier * max((1 - rp1 / tc.min_allowed_rp), 0)
 
     # Penalize for not leaving initial orbit
@@ -215,6 +203,7 @@ def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float,
     dr *= c.au_to_km
     dv *= yf_mag
 
+    # If it's broken, be obnoxious
     if np.isnan(f):
         print('\n\n' + '*' * 50)
         print('FITNESS IS NAN')
@@ -229,11 +218,7 @@ def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float,
         print('t_ratio = ')
         print(t_ratio)
         print('*' * 50 + '\n\n')
-    # if close:
-    # 	print('Close capture: f = %f' % f)
-    # 	print('m_ratio = %f' % m_ratio)
-    # 	print('t_ratio = %f' % t_ratio)
-    # 	time.sleep(5)
+
     return f, dr, dv
 
 
@@ -271,10 +256,7 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
     # Define flag for missed thrust
     if config.missed_thrust_allowed:
         outages = calc_mtes_v2(tc.tf, tc.t0, config.missed_thrust_tbe_factor, config.missed_thrust_rd_factor)
-        # if outages.shape == (0, 0):
-        #     outages = np.array([[], []], dtype=np.float64)
     else:
-        # outages = np.array([[], []], dtype=np.float64)
         outages = np.array([], dtype=np.float64).reshape(0, 2)
 
     # Create array of thrust segments based on outages
@@ -307,13 +289,13 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
         step_size = (times[i + 1] - times[i]) / tc.n_steps - 1e-15
 
         # Ratio of remaining propellant mass, and time ratio
-        mass_ratio = (y[i, -1] - tc.m_dry) / (y[0, -1] - tc.m_dry)  # (curr - dry) / (init - dry) = curr_prp / init_prp
+        mass_ratio = (y[i, -1] - tc.m_dry) / (y[0, -1] - tc.m_dry)  # (curr - dry) / (init - dry) = curr_prp / init_prop
         time_ratio = times[i] / times[-1]  # curr time / final time
 
         # Check if i is supposed to miss thrust for this segment
         if is_outage[i] or y[i, -1] <= tc.m_dry:
             # Missed-thrust event, or no propellant remaining
-            thrust = np.array([0., 0, 0])
+            thrust = np.zeros(3, dtype=float)
         else:
             # Query NN to get next thrust vector
             nn_input = np.empty(tc.n_dim * 4 + 2, dtype=np.float64)
@@ -336,22 +318,25 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
         # Save final state of current leg
         y[i + 1] = np.array(traj[-1])[1:] * tc.state_scales
 
-    y[-1] = y[-2]
+    # Copy values from final state of integration to two capture states
+    y[-1] = y[-2] = y[-3]
 
     # Compute maneuvers required to capture into a target orbit
     if config.do_terminal_lambert_arc:
+        # Compute relative state and position error
         state_f = y[-3, :6]
         mf = y[-3, 6]
         state_rel = state_f - yf
         pos_error = ou.mag3(state_rel[:3])
-        # Check if final position is "close" to target position - if not, compute a Lambert arc to match target state
+        # Check if final position is "close" to target position
         if pos_error > tc.r_limit_soi * c.r_soi_mars:  # very far away
-            # print('Performing far capture...')
+            # Far capture - Lambert arc
             maneuvers = ou.lambert_min_dv(tc.gm, state_f, times[-3] * tc.tu, tc.capture_time_low, tc.capture_time_high,
                                           max_count=10, short=tc.capture_short)
             gm_capture = tc.gm
             change_frame = False
         else:
+            # Close capture - hyperbolic capture at periareion
             print('Performing close capture')
             # TODO change ou._in_current's final output (TOF) to be in days, not seconds
             maneuvers = ou._in_current(state_rel, tc.capture_periapsis_radius_km, tc.capture_period_day * c.day_to_sec,
@@ -403,8 +388,10 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
 
         else:
             tof_capture, mf = ou.get_capture_final_values(maneuvers, mf)
+            # Assume instantaneous capture
             if change_frame:
                 tof_capture = 0.
+            # If it's broken, be obnoxious
             if np.isnan(mf):
                 print('\n\n' + '*' * 50)
                 print('FINAL MASS IS NAN')
@@ -425,15 +412,11 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
             maneuvers = tof_capture, mf
             y[-1, -1] = mf
 
-        # # Add time of flight to time vector
-        # ti[-1] = ti[-2] + tof / tc.tu
-
     else:
         # No maneuver
         maneuvers = [np.zeros(3, float), np.zeros(3, float), 0]
         y[-1] = y[-2] = y[-3]
         times[-1] = times[-2] = times[-3]
-        full_traj = full_traj[:-(2 * tc.n_steps)]
 
     # Dimensionalize states
     if save_full_traj:

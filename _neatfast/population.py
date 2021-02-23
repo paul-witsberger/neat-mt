@@ -225,7 +225,7 @@ class Population(object):
 
             self.generation += 1
 
-        if self.config.no_fitness_termination:
+        if not self.config.no_fitness_termination:
             self.reporters.found_solution(self.config, self.generation, self.best_genome)
 
         best_pop = {k: v for k, v in zip(best_pop_keys, best_pop_values)}

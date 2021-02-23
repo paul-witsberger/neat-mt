@@ -89,10 +89,12 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
     thrust_color = 'green'
 
     # Plot transfer, final, and initial orbits
-    fig, ax = plot_traj_2d(yinit, False, False, label='Initial', show_legend=False)
-    fig, ax = plot_traj_2d(full_traj[:, 1:4].T, False, False, fig_ax=(fig, ax), label='Transfer', start=True,
+    show_plot = False
+    fig, ax = plot_traj_2d(yinit, show_plot, False, label='Initial', show_legend=False)
+    fig, ax = plot_traj_2d(full_traj[:, 1:4].T, show_plot, False, fig_ax=(fig, ax), label='Transfer', start=True,
                            end=False, show_legend=False)
-    fig, ax = plot_traj_2d(yfinal, False, False, fig_ax=(fig, ax), label='Final', show_legend=False)
+    if not config.do_terminal_lambert_arc:
+        fig, ax = plot_traj_2d(yfinal, show_plot, False, fig_ax=(fig, ax), label='Final', show_legend=False)
 
     # Add colors to the missed-thrust and thrusting segments
     for i_out, is_out in enumerate(is_outage):
@@ -105,7 +107,7 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
 
     # Plot thrust vectors
     q_scale_thrust = np.max(np.linalg.norm(thrust_vec_body, axis=1)) * 20
-    q_scale_capture = max(mag3(dv1), mag3(dv2)) / 5
+    q_scale_capture = max(mag3(dv1), mag3(dv2)) / 10
     if tc.arrows_with_heads:
         quiver_opts = {'angles': 'xy', 'zorder': 8, 'width': 0.0025, 'units': 'width', 'scale_units': 'width',
                        'minlength': 0.1, 'headaxislength': 3, 'headlength': 6, 'headwidth': 6, 'color': arrow_color}
@@ -128,7 +130,7 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
     ax.scatter(y[-1, 0] / c.au_to_km, y[-1, 1] / c.au_to_km, edgecolor=final_point, facecolor='none', s=point_size)
 
     # Plot the target orbit - also, save the figure since this is the last element of the plot
-    plot_traj_2d(ytarg, False, True, fig_ax=(fig, ax), label='Target', end=True, show_legend=False,
+    plot_traj_2d(ytarg, show_plot, True, fig_ax=(fig, ax), label='Target', end=True, show_legend=False,
                  config_name=config_name)
 
     # Plot mass and thrust

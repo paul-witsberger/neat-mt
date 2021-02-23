@@ -9,7 +9,8 @@ import cProfile
 import time
 
 
-def run(config_name='default', init_state=None, parallel=True, max_gens=traj_config.max_generations):
+def run(config_name: str = 'default', init_state: list = None, parallel: bool = True,
+        max_gens: int = traj_config.max_generations, save_population: bool = False) -> neat.population.Population:
     # Load the config file, which is assumed to live in the same directory as this script.
     local_dir = os.path.dirname(__file__)
     config_path = os.path.join(local_dir, 'config', 'config_' + config_name)
@@ -24,10 +25,10 @@ def run(config_name='default', init_state=None, parallel=True, max_gens=traj_con
 
     # Run
     if parallel:
-        num_workers = os.cpu_count() - 1
-        timeout = 1.5
+        num_workers = os.cpu_count() - 4
+        timeout = None
         pe = neat.ParallelEvaluator(num_workers, eval_traj_neat, timeout=timeout)
-        winner, best_pop = pop.run(pe.evaluate, n=max_gens, num_workers=num_workers)
+        winner, best_pop = pop.run(pe.evaluate, n=max_gens)
     else:
         se = neat.SerialEvaluator(eval_traj_neat)
         winner, best_pop = pop.run(se.evaluate, n=max_gens)
@@ -44,6 +45,10 @@ def run(config_name='default', init_state=None, parallel=True, max_gens=traj_con
 
     pop.population = best_pop
 
+    if save_population:
+        with open('results//population_' + config_name, 'wb') as f:
+            pickle.dump(pop, f)
+
     # Make plots
     visualize.plot_stats(stats, ylog=True, filename="results//fitness_history_" + config_name + ".svg")
     visualize.plot_species(stats, filename="results//speciation_history_" + config_name + ".svg")
@@ -52,11 +57,11 @@ def run(config_name='default', init_state=None, parallel=True, max_gens=traj_con
         make_last_traj(print_mass=True, config_name=config_name)
     except NotImplementedError:
         pass
-    
+
     return pop
 
 
-def prepare_population(_pop):
+def prepare_population(_pop: neat.population.Population) -> list:
     # Reset some of the population statistics between runs
     for k in _pop.species.species.keys():
         _pop.species.species[k].last_improved = 1
@@ -66,11 +71,19 @@ def prepare_population(_pop):
     return [_pop.population, _pop.species, _pop.generation]
 
 
+def load_population(config_name: str) -> neat.population.Population:
+    with open('results//population_' + config_name, 'rb') as f:
+        pop = pickle.load(f)
+    return pop
+
+
 if __name__ == '__main__':
     # NOTE add -OO to configuration when running for slight speed improvement
     _get_timing = False
     _parallel = True
-    _max_gens = [0, 200, 0]
+    _max_gens = [0, 100, 0]
+    _save_population = [True, True, True]
+    _load_population = [False, False, True]
     pop = None
 
     t_start = time.time()
@@ -79,30 +92,18 @@ if __name__ == '__main__':
         cProfile.run('run(parallel=False)', 'results//neat_mt_timing_info')
 
     else:
-        # Step 1 of 3: run with a coarse distribution of nodes to get general steering law
-        if _max_gens[0] > 0:
-            coarse_str = 'coarse'
-            pop = run(config_name=coarse_str,
-                      parallel=_parallel,
-                      max_gens=_max_gens[0])
-
-        # Step 2 of 3: run with a finer distribution of nodes and some missed thrust to reasonably close solution
-        if _max_gens[1] > 0:
-            intermediate_str = 'intermediate'
-            intermediate_state_1 = prepare_population(pop) if pop is not None else None
-            pop = run(config_name=intermediate_str,
-                      init_state=intermediate_state_1,
-                      parallel=_parallel,
-                      max_gens=_max_gens[1])
-
-        # Step 3 of 3: run with little mutation and many cases of missed thrust to perform RBDO
-        if _max_gens[2] > 0:
-            final_str = 'final'
-            intermediate_state_2 = prepare_population(pop) if pop is not None else None
-            run(config_name=final_str,
-                init_state=intermediate_state_2,
-                parallel=_parallel,
-                max_gens=_max_gens[2])
+        phase_strs = ['coarse', 'intermediate', 'final']
+        num_phases = 3
+        for phase in range(num_phases):
+            if _max_gens[phase] > 0:
+                phase_str = phase_strs[phase]
+                pop = load_population(phase_str) if _load_population[phase] else pop
+                phase_init_state = prepare_population(pop) if pop is not None else None
+                pop = run(config_name=phase_str,
+                          init_state=phase_init_state,
+                          parallel=_parallel,
+                          max_gens=_max_gens[phase],
+                          save_population=_save_population[0])
 
     t_end = time.time()
     print('\nTotal runtime = %.1f sec' % (t_end - t_start))
@@ -110,3 +111,11 @@ if __name__ == '__main__':
 # TODO continuing after extinction fails with KeyError
 # TODO sometimes fails with KeyError after stagnation
 # TODO best individual can get passed between species
+# TODO sometimes fails with KeyError randomly
+#   -> I bet all of these are actually related somehow - if a genome moves to another species while being the best,
+#      it can't be found during post_evalate (...actually, they are separate)
+#   -> actually, it may be partially tied to my edit for "same child" if I wasn't adding (...actually, not this)
+#   -> also, this can happen with just one species
+#   -> somehow, {genome.key: species.key} is not being set correctly - this occurs in speciate() [species.py, 131]
+#       -> I don't see how the loop assigning self.genome_to_species could cause this error - the issue probably
+#          occurs above - need to check new_representatives and new_members (error is probably with new_members)

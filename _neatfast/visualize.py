@@ -112,7 +112,7 @@ def plot_species(statistics, view=False, filename='speciation.svg'):
 
 
 def draw_net(config, genome, view=False, filename=None, node_names=None, show_disabled=True, prune_unused=False,
-             node_colors=None, fmt='svg'):
+             node_colors=None, fmt='pdf'):
     """ Receives a genome and draws a neural network with arbitrary topology. """
     # Attributes for network nodes.
     if graphviz is None:
@@ -179,9 +179,17 @@ def draw_net(config, genome, view=False, filename=None, node_names=None, show_di
 
         attrs = {'style': 'filled'}
         attrs['fillcolor'] = node_colors.get(n, 'white')
-        dot.node(str(n), _attributes=attrs)
+        dot.node(node_names[n], label=node_names[n].split('_')[0], _attributes=attrs)
 
-    for cg in genome.connections.values():
+    # Sort nodes/connections
+    a = np.array([[k[0], k[1]] for k in genome.connections.keys()])
+    a = a[a[:, 1].argsort()]
+    a = a[a[:, 0].argsort(kind='mergesort')]
+    a = [tuple(row) for row in a]
+
+    for k in a:
+    # for cg in genome.connections.values():
+        cg = genome.connections[k]
         if cg.enabled or show_disabled:
             #if cg.input not in used_nodes or cg.output not in used_nodes:
             #    continue

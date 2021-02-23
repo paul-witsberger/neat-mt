@@ -64,8 +64,8 @@ isp_chemical = 370  # for the final correction burns
 # input_indices = np.array([0, 1, 2, 3, 8, 9])  # ignore target, 2D [6 nodes]
 # input_indices = np.array([0, 1, 3, 4, 6, 7, 9, 10, 12, 13])  # inertial inputs, ignore Z components, 3D [10 nodes]
 # input_indices = np.array([0, 1, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13])  # keplerian inputs, ignore inclination [12 nodes]
-# input_indices = np.array([0, 1, 3, 4, 5, 12, 13])  # keplerian inputs, ignore inclination, target [7]
-input_indices = np.array([12, 13])
+input_indices = np.array([0, 1, 3, 4, 5, 12, 13])  # keplerian inputs, ignore inclination, target [7]
+# input_indices = np.array([12, 13])  # mass and time [2]
 # input_indices = None  # all
 n_outputs = 2
 
