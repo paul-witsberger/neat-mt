@@ -1,0 +1,7 @@
+./bootstrap.sh 	--prefix=/home/roger/aaerg13/Witsberger/boost/boost_build_dir/
+				--with-python=/home/roger/aaerg13/Witsberger/anaconda3/envs/tbp/bin/python
+				--with-python-version=3.6
+				--with-python-root=/home/roger/aaerg13/Witsberger/anaconda3/envs/tbp/bin/python
+
+./b2 --with-python address-model=64 variant=release link=shared python-debugging=off threading=multi stage
+		

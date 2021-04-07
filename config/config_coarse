@@ -1,17 +1,17 @@
 # The `NEAT` section specifies parameters particular to the NEAT algorithm
 # or the experiment itself.  This is the only required section.
 [NEAT]
-pop_size               = 40
+pop_size               = 400
 reset_on_extinction    = 0
 fitness_plot_frequency = 15
-num_cases = 5
-do_terminal_lambert_arc  = True
-missed_thrust_allowed    = True
+num_cases = 1
+do_terminal_lambert_arc  = False
+missed_thrust_allowed    = False
 missed_thrust_tbe_factor = 1.0
 missed_thrust_rd_factor  = 1.0
 
 [DefaultGenome]
-num_inputs              = 7
+num_inputs              = 6
 num_hidden              = 3
 num_outputs             = 2
 initial_connection      = partial_direct 0.8

@@ -4,13 +4,17 @@ import neatfast as neat
 from neatfast import visualize
 from missed_thrust import eval_traj_neat
 from builder import make_last_traj, make_neat_network_diagram
-import traj_config
 import cProfile
 import time
+import numpy as np
+
+
+def dummy_fitness_func(genome, config):
+    return -np.random.rand() * 100
 
 
 def run(config_name: str = 'default', init_state: list = None, parallel: bool = True,
-        max_gens: int = traj_config.max_generations, save_population: bool = False) -> neat.population.Population:
+        max_gens: int = None, save_population: bool = False) -> neat.population.Population:
     # Load the config file, which is assumed to live in the same directory as this script.
     local_dir = os.path.dirname(__file__)
     config_path = os.path.join(local_dir, 'config', 'config_' + config_name)
@@ -25,12 +29,13 @@ def run(config_name: str = 'default', init_state: list = None, parallel: bool = 
 
     # Run
     if parallel:
-        num_workers = os.cpu_count() - 4
+        num_workers = os.cpu_count() - 16
+        num_workers = 60
         timeout = None
         pe = neat.ParallelEvaluator(num_workers, eval_traj_neat, timeout=timeout)
-        winner, best_pop = pop.run(pe.evaluate, n=max_gens)
+        winner, best_pop = pop.run(pe.evaluate, n=max_gens, num_workers=24)
     else:
-        se = neat.SerialEvaluator(eval_traj_neat)
+        se = neat.SerialEvaluator(dummy_fitness_func)
         winner, best_pop = pop.run(se.evaluate, n=max_gens)
 
     print('\n\n' + '*' * 60 + '\n' + '*' * 24 + '  FINISHED  ' + '*' * 24 + '\n' + '*' * 60 + '\n\n')
@@ -81,7 +86,7 @@ if __name__ == '__main__':
     # NOTE add -OO to configuration when running for slight speed improvement
     _get_timing = False
     _parallel = True
-    _max_gens = [0, 100, 0]
+    _max_gens = [0, 200, 0]
     _save_population = [True, True, True]
     _load_population = [False, False, True]
     pop = None
@@ -90,7 +95,6 @@ if __name__ == '__main__':
     if _get_timing:
         # Run serially to capture all function calls
         cProfile.run('run(parallel=False)', 'results//neat_mt_timing_info')
-
     else:
         phase_strs = ['coarse', 'intermediate', 'final']
         num_phases = 3
@@ -107,6 +111,7 @@ if __name__ == '__main__':
 
     t_end = time.time()
     print('\nTotal runtime = %.1f sec' % (t_end - t_start))
+
 
 # TODO continuing after extinction fails with KeyError
 # TODO sometimes fails with KeyError after stagnation

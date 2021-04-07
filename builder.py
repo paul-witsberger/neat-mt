@@ -13,6 +13,7 @@ from missed_thrust import integrate_func_missed_thrust, traj_fit_func, compute_b
 from plotter import plot_traj_2d, plot_mass_history, plot_thrust_history, final_point, point_size
 from orbit_util import period_from_inertial, rotate_vnc_to_inertial_3d, mag3, keplerian_to_inertial_3d
 import boost_tbp
+import warnings
 
 
 def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool = False, save_traj: bool = False,
@@ -53,18 +54,19 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
     step_type, eom_type = 0, 3
     yinit_tf = period_from_inertial(y0[:-1], gm=tc.gm, max_time_sec=tc.max_final_time)
     ytarg_tf = period_from_inertial(yf, gm=tc.gm, max_time_sec=tc.max_final_time)
-    yinit = tbp.prop(list(y0[tc.ind_dim] / tc.state_scales[:-1]), [tc.t0 / tc.tu, yinit_tf / tc.tu], [], 6, 2, 0,
-                     tc.rtol, tc.atol, (yinit_tf - tc.t0) / (tc.n_terminal_steps + 1) / tc.tu, step_type, eom_type)
+    yinit = tbp.prop(list(y0[:-1] / tc.state_scales[:-1]), [tc.t0 / tc.tu, yinit_tf / tc.tu], [], len(y0) - 1, 2, 0,
+                     tc.rtol, tc.atol, (yinit_tf - tc.t0) / (tc.n_terminal_steps + 1) / tc.tu, step_type, eom_type,
+                     tc.n_dim)
     yinit = (np.array(yinit)[:, 1:] * tc.state_scales[:-1]).T
     y, times, is_outage, full_traj, maneuvers = integrate_func_missed_thrust(thrust_fcn, y0, yf, config, save_traj, True)
     if not save_traj:
         return
     yfinal_tf = period_from_inertial(y[-1, :-1], gm=tc.gm, max_time_sec=tc.max_final_time)
-    yfinal = tbp.prop(list(y[-1, tc.ind_dim] / tc.state_scales[:-1]), [tc.t0 / tc.tu, yfinal_tf / tc.tu], [], 6, 2, 0,
-                      tc.rtol, tc.atol, (yfinal_tf - tc.t0) / (tc.n_terminal_steps + 1) / tc.tu, step_type, eom_type)
+    yfinal = tbp.prop(list(y[-1, :-1] / tc.state_scales[:-1]), [tc.t0 / tc.tu, yfinal_tf / tc.tu], [], len(y0) - 1, 2, 0,
+                      tc.rtol, tc.atol, float((yfinal_tf - tc.t0) / (tc.n_terminal_steps + 1) / tc.tu), step_type, eom_type, tc.n_dim)
     yfinal = (np.array(yfinal)[:, 1:] * tc.state_scales[:-1]).T
-    ytarg = tbp.prop(list(yf[tc.ind_dim[:-1]] / tc.state_scales[:-1]), [tc.t0 / tc.tu, ytarg_tf / tc.tu], [], 6, 2, 0,
-                     tc.rtol, tc.atol, (ytarg_tf - tc.t0) / (tc.n_terminal_steps + 1) / tc.tu, step_type, eom_type)
+    ytarg = tbp.prop(list(yf / tc.state_scales[:-1]), [tc.t0 / tc.tu, ytarg_tf / tc.tu], [], len(y0) - 1, 2, 0,
+                     tc.rtol, tc.atol, float((ytarg_tf - tc.t0) / (tc.n_terminal_steps + 1) / tc.tu), step_type, eom_type, tc.n_dim)
     ytarg = (np.array(ytarg)[:, 1:] * tc.state_scales[:-1]).T
 
     # Calculate thrust vectors throughout transfer trajectory
@@ -149,13 +151,13 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
         print('Final mass = {0:.3f} kg'.format(y[-1, -1]))
 
     # Remove Lambert arc delta V from final NN-controlled state for fitness calculation
-    yf_actual = y[-2, tc.ind_dim]
+    yf_actual = y[-2, :-1]
     yf_actual[tc.n_dim:] -= dv1[:tc.n_dim]
 
     # Calculate and print fitness
     m_ratio = (y0[-1] - y[-1, -1]) / y0[-1]
     t_ratio = (times[-1] - times[-3]) / times[-3]
-    f, dr, dv = traj_fit_func(yf_actual, yf[tc.ind_dim[:-1]], y0, m_ratio, t_ratio)
+    f, dr, dv = traj_fit_func(yf_actual, yf, y0[:2 * tc.n_dim], m_ratio, t_ratio)
     print('Final fitness = %f\n' % -f)
 
 
@@ -177,7 +179,7 @@ def make_last_traj(print_mass: bool = True, save_traj: bool = True, neat_net: bo
 def get_thrust_history(ti: np.ndarray, y: np.ndarray, yf: np.ndarray, thrust_fcn: Neurocontroller.get_thrust_vec_neat)\
         -> np.ndarray:
     # Calculate thrust vector at each time step
-    thrust_vec = np.zeros((len(ti) - 3, 3), float)
+    thrust_vec = np.zeros((len(ti) - 3, tc.n_dim), float)
     for i in range(len(ti) - 3):
         # Check if there is any remaining propellant mass
         if y[i, -1] > tc.m_dry + 0.01:
@@ -186,16 +188,20 @@ def get_thrust_history(ti: np.ndarray, y: np.ndarray, yf: np.ndarray, thrust_fcn
             time_ratio = ti[i] / ti[-3]
             # Query NN to get thrust vector
             thrust_vec[i, :] = thrust_fcn(
-                np.hstack((y[i, tc.ind_dim], yf[tc.ind_dim[:-1]], mass_ratio, time_ratio))) * tc.T_max_kN
+                np.hstack((y[i, :-1], yf, mass_ratio, time_ratio))) * tc.T_max_kN
         else:
             # No thrust
-            thrust_vec[i, :] = np.array([0, 0, 0])
+            thrust_vec[i, :] = np.zeros(tc.n_dim)
     return thrust_vec
 
 
 def rotate_thrust(thrust_vec_body: np.ndarray, y: np.ndarray) -> np.ndarray:
     # Velocity angle with respect to inertial X
-    rot_ang = np.arctan2(y[:, 4], y[:, 3])
+    if tc.n_dim == 2:
+        rot_ang = np.arctan2(y[:, 3], y[:, 2])
+    else:
+        rot_ang = np.arctan2(y[:, 4], y[:, 3])
+        raise warnings.warn('Thrust vector is not being rotated properly for 3D cases.')
     # Direction cosine matrix
     dcm = np.array([[np.cos(rot_ang), -np.sin(rot_ang)], [np.sin(rot_ang), np.cos(rot_ang)]])
     # Apply DCM to each state
@@ -212,8 +218,8 @@ def make_neat_network_diagram(config_name=None):
         return
     # Load network
     # ext = 'tmp' if config_name is None else config_name
-    ext = 'tmp'
-    with open('results//winner_' + ext, 'rb') as f:
+    # ext = 'tmp'
+    with open('results//winner_' + config_name, 'rb') as f:
         winner = pickle.load(f)
 
     # Load configuration
@@ -223,7 +229,7 @@ def make_neat_network_diagram(config_name=None):
     config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction, neat.DefaultSpeciesSet, neat.DefaultStagnation,
                          config_path)
 
-    _node_input_names_2d = {-1: '<<i>a<i><SUB>c</SUB>>',
+    _node_input_names_2d = {-1: '<<i>a</i><SUB>c</SUB>>',
                             -2: '<<i>e</i><SUB>c</SUB>>',
                             -3: '<&#969;<SUB>c</SUB>>', # omega
                             -4: '<<i>f</i><SUB>c</SUB>>',
@@ -256,12 +262,12 @@ def make_neat_network_diagram(config_name=None):
                              1: '<&#946;>',  # beta, thrust angle (lat)
                              2: '<&#932;>'}  # Tau, throttle
 
-    _hidden_node_names = {k: v.activation + '_' + str(k) for k, v in winner.nodes.items() if k > tc.n_outputs - 1}
+    _hidden_node_names = {k: v.activation + '_' + str(k) for k, v in winner.nodes.items() if k > tc.n_dim - 1}
 
     # Define node names
     node_names = _node_input_names_2d if tc.n_dim == 2 else _node_input_names_3d
     node_names = {-i-1: node_names[-key-1] for i, key in enumerate(tc.input_indices)}
-    node_names.update(_node_output_names_2d if tc.n_outputs == 2 else _node_output_names_3d)
+    node_names.update(_node_output_names_2d if tc.n_dim == 2 else _node_output_names_3d)
     node_names.update(_hidden_node_names)
 
     # Draw network (remove disabled and unused nodes/connections)

@@ -8,7 +8,7 @@ import constants as c
 import os
 import pickle
 from numba import njit, jit
-from traj_config import gm, ind_dim
+from traj_config import gm
 from constants import au_to_km
 import warnings
 import time
@@ -55,15 +55,15 @@ def eval_traj_neat(genome: neat.genome.DefaultGenome, config: neat.config.Config
             continue
 
         # # Get target final state
-        yf_actual = y[-3, tc.ind_dim]
-        yf_target = yf[tc.ind_dim[:-1]]
+        yf_actual = y[-3, :-1]
+        yf_target = yf[:]
 
         # Calculate final propellant mass ratio and final time ratio
         m_ratio = (y0[-1] - y[-1, -1]) / y0[-1]
         t_ratio = (times[-1] - times[-3]) / times[-3]
 
         # Get fitness
-        f[i], dr, dv = traj_fit_func(yf_actual, yf_target, y0[:6], m_ratio, t_ratio)
+        f[i], dr, dv = traj_fit_func(yf_actual, yf_target, y0[:2 * tc.n_dim], m_ratio, t_ratio)
 
     # Calculate scalar fitness
     rdo = False
@@ -103,14 +103,25 @@ def compute_bcs() -> (np.ndarray, np.ndarray):
     The times used are actual dates, and the states are based on analytic ephemeris.
     :return:
     """
-    elems = ['a', 'e', 'i', 'w', 'O', 'M']
+    if tc.n_dim == 2:
+        elems = ['a', 'e', 'w', 'O', 'M']
+    else:
+        elems = ['a', 'e', 'i', 'w', 'O', 'M']
     planets = [tc.init_body, tc.target_body]
-    times = np.array([tc.times_jd1950_jc[0], tc.times_jd1950_jc[-1]])
+    times = tc.times_jd1950_jc
     states_coe = c.ephem(elems, planets, times)
-    states_coe[2, :, :] = 0.  # inclination
-    # states_coe[4, :, :] = 0.  # longitude of ascending node
-    state_0_i = ou.keplerian_to_inertial_3d(states_coe[:, 0, 0], mean_or_true='mean')
-    state_f_i = ou.keplerian_to_inertial_3d(states_coe[:, 1, 1], mean_or_true='mean')
+    if tc.n_dim == 2:
+        states_coe_2d = np.empty([4, 2, 2])
+        states_coe_2d[0:2] = states_coe[0:2]
+        states_coe_2d[2] = states_coe[2] + states_coe[3]
+        states_coe_2d[3] = states_coe[4]
+        state_0_i = ou.keplerian_to_inertial_2d(states_coe_2d[:, 0, 0], mean_or_true='mean')  # TODO verify
+        state_f_i = ou.keplerian_to_inertial_2d(states_coe_2d[:, 1, 1], mean_or_true='mean')
+    else:
+        # states_coe[2, :, :] = 0.  # inclination
+        # states_coe[4, :, :] = 0.  # longitude of ascending node
+        state_0_i = ou.keplerian_to_inertial_3d(states_coe[:, 0, 0], mean_or_true='mean')
+        state_f_i = ou.keplerian_to_inertial_3d(states_coe[:, 1, 1], mean_or_true='mean')
     return state_0_i, state_f_i
 
 
@@ -123,11 +134,11 @@ def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float,
 
     # Convert states to keplerian elements
     if tc.n_dim == 2:
-        a0, e0, w0, f0 = ou.inertial_to_keplerian_2d(y0[ind_dim], gm=gm)
+        a0, e0, w0, f0 = ou.inertial_to_keplerian_2d(y0, gm=gm)
         a1, e1, w1, f1 = ou.inertial_to_keplerian_2d(y, gm=gm)
         a2, e2, w2, f2 = ou.inertial_to_keplerian_2d(yf, gm=gm)
     else:
-        a0, e0, i0, w0, om0, f0 = ou.inertial_to_keplerian_3d(y0[:6], gm=gm)
+        a0, e0, i0, w0, om0, f0 = ou.inertial_to_keplerian_3d(y0, gm=gm)
         a1, e1, i1, w1, om1, f1 = ou.inertial_to_keplerian_3d(y, gm=gm)
         a2, e2, i2, w2, om2, f2 = ou.inertial_to_keplerian_3d(yf, gm=gm)
 
@@ -141,36 +152,32 @@ def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float,
 
     # Calculate error in states
     dr_tol_close = c.r_soi_mars / c.au_to_km
-    dr_tol_far = 50 * dr_tol_close
-    yf_mag = ou.mag3(yf[tc.n_dim:])
-    # dv_tol = 0.241 / yf_mag
-    dr = ou.mag3(yf[:tc.n_dim] - y[:tc.n_dim]) / c.au_to_km  # TODO if 2D, would need mag2 instead of mag3
-    dv = ou.mag3(yf[tc.n_dim:] - y[tc.n_dim:]) / yf_mag
+    dr_tol_far = 50 * dr_tol_close  # TODO set the multiplier in traj_config
+    mag = ou.mag2 if tc.n_dim == 2 else ou.mag3
+    yf_mag = mag(yf[tc.n_dim:])
+    dr = mag(yf[:tc.n_dim] - y[:tc.n_dim]) / c.au_to_km
+    dv = mag(yf[tc.n_dim:] - y[tc.n_dim:]) / yf_mag
     drp = abs(rp2 - rp1) / tc.a0_min
     dra = abs(ra2 - ra1) / tc.a0_min
     dw = abs(ou.fix_angle(w2 - w1, np.pi, -np.pi) / np.pi)
     df = abs(ou.fix_angle(f2 - f1, np.pi, -np.pi) / np.pi)
+    dwf = abs(ou.fix_angle(f2 + w2 - f1 - w1, np.pi, -np.pi) / np.pi)
     penalty = np.empty(4)
     close = False
+    states = np.array([drp, dra, dw, df])
     if dr > dr_tol_far:
         # Far away
-        # penalty[:] = 100
-        penalty = np.array([100, 100, 100, 100], dtype=np.float64)
-        # penalty = np.array([100, 100, 80, 80], dtype=np.float64)
-        states = np.array([drp, dra, dw, df])
+        penalty[:] = 100
+        # penalty = np.array([100, 100, 100, 100], dtype=np.float64)
+    elif dr > dr_tol_close:
+        # Intermediate
+        # print('Intermediate')
+        penalty[:] = 10
+        # penalty = np.array([10, 10, 10, 10, 5, 5], dtype=np.float64)
     else:
-        states = np.array([drp, dra, dw, df, dr, dv])
-        # states = np.array([drp, dra, dw, df])
-        if dr < dr_tol_close:  # TODO dr is scaled differently from the value to compute "close capture"
-            # print('dr = %.3e AU' % dr)
-            close = True
-            # Within sphere-of-influence
-            # penalty[:] = 0
-            penalty = np.array([0, 0, 0, 0, 0, 0], dtype=np.float64)
-        else:
-            # Intermediate
-            # penalty[:] = 50
-            penalty = np.array([20, 20, 20, 20, 50, 50], dtype=np.float64)
+        # Within sphere-of-influence
+        penalty[:] = 0
+        close = True
 
     # Set cost function based on final trajectory type
     if tc.elliptical_final:
@@ -186,7 +193,7 @@ def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float,
     f = 0.
     for i in range(len(states)):
         f += max(squares[i], abses[i])
-    f += m_ratio * mass_weight + t_ratio * time_weight + np.sum(penalty)
+    f += m_ratio * mass_weight + t_ratio * time_weight
 
     # Penalize going too close to central body
     if tc.rp_penalty:
@@ -196,7 +203,7 @@ def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float,
     if tc.no_thrust_penalty:
         kepl_scales = [ra2 - ra0, rp2 - rp0]
         dy0 = np.sum(np.abs(np.array([ra1 - ra0, rp1 - rp0]) / np.array(kepl_scales)))
-        dy0 = 0. if dy0 > 0.2 else 1000.
+        dy0 = 0. if dy0 > 0.2 else 1000.  # TODO set these values in traj_config
         f += dy0
 
     # Dimensionalize error values
@@ -275,15 +282,17 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
         integrator_type = 1  # adaptive step
     eom_type = 0  # 0 constant power, 1 variable power, 2 state transition matrix
 
+    mag = ou.mag2 if tc.n_dim == 2 else ou.mag3
+
     # Main loop
     full_traj = np.empty(((len(times) - 3) * tc.n_steps, state_size + 1), dtype=np.float64)
     for i in range(len(times) - 3):
         # Check if orbital energy is within reasonable bounds - terminate integration if not
-        r_mag = ou.mag3(y[i, :3])
-        v_mag = ou.mag3(y[i, 3:6])
+        r_mag = mag(y[i, :tc.n_dim])
+        v_mag = mag(y[i, tc.n_dim:2 * tc.n_dim])
         eps = ou.energy_from_gm_r_v(tc.gm, r_mag, v_mag)
         if (eps > tc.max_energy or eps < tc.min_energy) and not save_full_traj:
-            return np.array(0), 0, 0, [np.empty(3), np.empty(3), 0]
+            return np.array(0), 0, 0, np.array(0), [np.empty(3), np.empty(3), 0]
 
         # Fixed step integrator step size - take a small amount off so fixed steps land within bounds
         step_size = (times[i + 1] - times[i]) / tc.n_steps - 1e-15
@@ -295,12 +304,12 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
         # Check if i is supposed to miss thrust for this segment
         if is_outage[i] or y[i, -1] <= tc.m_dry:
             # Missed-thrust event, or no propellant remaining
-            thrust = np.zeros(3, dtype=float)
+            thrust = np.zeros(tc.n_dim, dtype=float)
         else:
             # Query NN to get next thrust vector
             nn_input = np.empty(tc.n_dim * 4 + 2, dtype=np.float64)
-            nn_input[:tc.n_dim * 2] = y[i, tc.ind_dim]
-            nn_input[2 * tc.n_dim:4 * tc.n_dim] = yf[tc.ind_dim[:-1]]
+            nn_input[:tc.n_dim * 2] = y[i, :-1]
+            nn_input[2 * tc.n_dim:4 * tc.n_dim] = yf
             nn_input[-2], nn_input[-1] = mass_ratio, time_ratio
             thrust = thrust_fcn(nn_input) * tc.T_max_kN / tc.fu
 
@@ -309,7 +318,7 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
 
         # Propagate from the current state until the next time step
         traj = tbp.prop(list(y[i] / tc.state_scales), [times[i], times[i + 1]], param, state_size, time_size,
-                        param_size, tc.rtol, tc.atol, step_size, integrator_type, eom_type)
+                        param_size, tc.rtol, tc.atol, step_size, integrator_type, eom_type, tc.n_dim)
 
         # Save full trajectory including intermediate states
         if save_full_traj:
@@ -323,10 +332,19 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
 
     # Compute maneuvers required to capture into a target orbit
     if config.do_terminal_lambert_arc:
+        # TODO make this handle 2D
         # Compute relative state and position error
-        state_f = y[-3, :6]
-        mf = y[-3, 6]
-        state_rel = state_f - yf
+        if tc.n_dim == 2:
+            state_f = np.empty(6)
+            state_rel = np.empty(6)
+            state_f[:2], state_f[2], state_f[3:5], state_f[5] = y[-3, :2], 0., y[-3, 2:4], 0.
+            mf = y[-3, 4]
+            state_rel[:2], state_rel[2] = state_f[:2] - yf[:2], 0.
+            state_rel[3:5], state_rel[5] = state_f[3:5] - yf[2:4], 0.
+        else:
+            state_f = y[-3, :6]
+            mf = y[-3, 6]
+            state_rel = state_f - yf
         pos_error = ou.mag3(state_rel[:3])
         # Check if final position is "close" to target position
         if pos_error > tc.r_limit_soi * c.r_soi_mars:  # very far away
@@ -374,8 +392,9 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
                 # # Add relative states to Mars' states
                 # y_capture[:, :6] += state_sun_mars_y_ind
                 # full_traj_capture[:, 1:-1] += state_sun_mars
-                dv1_mag = ou.mag3(maneuvers[0])
-                dv2_mag = ou.mag3(maneuvers[1])
+                mag = ou.mag2 if tc.n_dim == 2 else ou.mag3
+                dv1_mag = mag(maneuvers[0])
+                dv2_mag = mag(maneuvers[1])
                 m1 = y[-3, -1] / np.exp(dv1_mag * 1000 / c.g0_ms2 / tc.isp_chemical)
                 m2 = m1 / np.exp(dv2_mag * 1000 / c.g0_ms2 / tc.isp_chemical)
                 y_capture = np.vstack((y[-3], y[-3]))
@@ -384,6 +403,8 @@ def integrate_func_missed_thrust(thrust_fcn: Neurocontroller.get_thrust_vec_neat
 
             # Append capture states to main array of states
             y[-2:] = y_capture
+            # if tc.n_dim == 2:
+            #     full_traj_capture = full_traj_capture[:, [0, 1, 2, 4, 5, 7]]
             full_traj = np.append(full_traj, full_traj_capture, axis=0)
 
         else:
@@ -501,14 +522,13 @@ def build_time_array(outages):
 
 def _update_params(thrust):
     if tc.variable_power:
-        return [float(tc.m_dry / tc.mu), float(thrust[0]), float(thrust[1]), float(thrust[2]), tc.power_reference,
-               tc.power_min, tc.power_max, float(tc.thrust_power_coef[0]), float(tc.thrust_power_coef[1]),
-               float(tc.thrust_power_coef[2]), float(tc.thrust_power_coef[3]), float(tc.thrust_power_coef[4]),
-               float(tc.isp_power_coef[0]), float(tc.isp_power_coef[1]), float(tc.isp_power_coef[2]),
-               float(tc.isp_power_coef[3]), float(tc.isp_power_coef[4])]
+        return [*thrust, float(tc.m_dry / tc.mu), tc.power_reference, tc.power_min, tc.power_max,
+                float(tc.thrust_power_coef[0]), float(tc.thrust_power_coef[1]), float(tc.thrust_power_coef[2]),
+                float(tc.thrust_power_coef[3]), float(tc.thrust_power_coef[4]),
+                float(tc.isp_power_coef[0]), float(tc.isp_power_coef[1]), float(tc.isp_power_coef[2]),
+                float(tc.isp_power_coef[3]), float(tc.isp_power_coef[4])]
     else:
-        return [float(c.g0_ms2 * tc.Isp / tc.du * tc.tu), float(tc.m_dry / tc.mu), float(thrust[0]),
-               float(thrust[1]), float(thrust[2])]
+        return [*thrust, float(c.g0_ms2 * tc.Isp / tc.du * tc.tu), float(tc.m_dry / tc.mu)]
 
 
 @jit(nopython=True, cache=True)

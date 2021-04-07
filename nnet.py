@@ -1,8 +1,8 @@
 import numpy as np
 import orbit_util as ou
-from traj_config import n_dim, n_outputs, input_frame, input_indices, scales_in, scales_out, gm, out_node_scales,\
+from traj_config import n_dim, input_frame, input_indices, scales_in, scales_out, gm, out_node_scales,\
     angle_choices, use_multiple_angle_nodes
-from numba import njit, jit
+from numba import jit
 
 
 @jit(nopython=True, cache=False)
@@ -12,7 +12,7 @@ def scale_inputs(inputs: np.ndarray, scales_in: np.ndarray = scales_in) -> np.nd
 
 @jit(nopython=True, cache=False)
 def scale_outputs(outputs: np.ndarray, old_scales: np.ndarray = out_node_scales, new_scales: np.ndarray = scales_out,
-                  nd: int = n_outputs):
+                  nd: int = n_dim):
     so = old_scales
     sn = new_scales
     outputs_scaled = (outputs[0] - so[:nd, 0]) * (sn[:nd, 1] - sn[:nd, 0]) / (so[:nd, 1] - so[:nd, 0]) + sn[:nd, 0]
@@ -131,7 +131,7 @@ class Neurocontroller:
         out = np.array(self.net.activate(state_scaled)).reshape((1, -1))
 
         # Convert outputs from angle and throttle to thrust vector
-        if n_outputs == 2:
+        if n_dim == 2:
             if use_multiple_angle_nodes:  # categorical classification
                 angle_choice = np.argmax(out[0, :-1])
                 alpha = self.get_angle(angle_choice)
@@ -140,13 +140,12 @@ class Neurocontroller:
                 # alpha, throttle = self.scaleOutputs(out)
                 alpha, throttle = scale_outputs(out)
             # thrust = np.hstack((np.cos(alpha), np.sin(alpha), 0)) * throttle
-            thrust = np.empty(3, np.float64)
+            thrust = np.empty(2, np.float64)
             # thrust[0] = np.cos(alpha) * throttle  # velocity
             # thrust[1] = np.sin(alpha) * throttle  # anti-co-normal
             # thrust[2] = 0.                        # normal
-            thrust[0] = -np.sin(alpha) * throttle  # co-normal
-            thrust[1] = np.cos(alpha) * throttle  # velocity
-            thrust[2] = 0.                        # normal
+            thrust[1] = np.sin(alpha) * throttle   # co-normal
+            thrust[0] = np.cos(alpha) * throttle    # velocity
         else:
             alpha, beta, throttle = self.scaleOutputs(out)
             # TODO use this info to properly apply thrust

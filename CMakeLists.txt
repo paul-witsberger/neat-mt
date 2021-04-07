@@ -1,4 +1,4 @@
-# NOTE: run the following commands from C:\Users\pawit\Documents\codes\boost_tbp_build
+# NOTE: This file is to compile boost_tbp on Windows. Run the following commands from C:\Users\pawit\Documents\codes\boost_tbp_build.
 # NOTE: 	cmake -A x64 C:\Users\pawit\OneDrive\Documents\Classes\Research\neat-mt
 # NOTE:		cmake --build . --config Release --target install
 

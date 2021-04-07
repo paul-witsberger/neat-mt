@@ -7,6 +7,7 @@ from matplotlib import pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
 
+# TODO look into adding textures to a sphere to make a planet
 matplotlib.rcParams['font.sans-serif'] = "Times New Roman"
 matplotlib.rcParams['font.family'] = "serif"
 assert Axes3D
@@ -226,7 +227,7 @@ def plot_thrust_history(t: np.ndarray, thrust_vec: np.ndarray, show_plot: bool =
     ax2 = fig.add_subplot(212)
     thrust_mag = np.linalg.norm(thrust_vec, axis=1)
     throttle = thrust_mag / tc.T_max_kN
-    angle = np.rad2deg(np.arctan2(thrust_vec[:, 1], thrust_vec[:, 0])) - 90
+    angle = np.rad2deg(np.arctan2(thrust_vec[:, 1], thrust_vec[:, 0]))
     angle[throttle == 0.] = 0.
     ax1.step(t, throttle, where='post')
     ax1.set_title('Throttle')

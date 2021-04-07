@@ -1,24 +1,56 @@
-# TODO look into adding textures to a sphere to make a planet
-
+########################################################################################################################
+# Imports
+########################################################################################################################
 import numpy as np
 import constants as c
 from datetime import datetime
+########################################################################################################################
 
 
-max_generations = 100
-
+########################################################################################################################
+# Define general problem characteristics: initial, final, and central bodies; dimensionality; times
+########################################################################################################################
 gm = c.u_sun_km3s2
 gm_target = c.u_mars_km3s2
-n_dim = 3
-assert n_dim == 2 or n_dim == 3
-# Create logical list for indices of 2D components
+
+n_dim = 2
+
+# Define initial and final bodies and times
+init_body = 'earth'
+target_body = 'mars'
+central_body = 'sun'
+t0_str = '2019 Sep 27 00:00:00'
+tf_str = '2022 Jun 23 00:00:00'
+fmt = '%Y %b %d %H:%M:%S'
+ordinal_to_julian = 1721424.5
+t0 = datetime.strptime(t0_str, fmt).toordinal() + ordinal_to_julian
+tf = datetime.strptime(tf_str, fmt).toordinal() + ordinal_to_julian
+times = np.array([t0, tf])
+times_jd1950_jc = (times - c.reference_date_jd1950) * c.day_to_jc
+tf = (tf - t0) * c.day_to_sec
+t0 = 0
+launch_window = 0 * c.day_to_sec
+arrival_window = 0 * c.day_to_sec
+########################################################################################################################
+
+
+########################################################################################################################
+# Create logical list for indices of state components excluding mass
+########################################################################################################################
 if n_dim == 2:
+    # [x, y, z, vx, vy, vz, mass] -> [x, y, vx, vy]
     ind_dim = np.array([True, True, False, True, True, False, False])
 else:
-    ind_dim = np.array([True] * 6 + [False], dtype=np.bool)
+    # [x, y, z, vx, vy, vz, mass] -> [x, y, z, vx, vy, vz]
+    ind_dim = np.array([True] * 6 + [False])
+########################################################################################################################
 
+
+########################################################################################################################
 # Define initial and final orbits
+########################################################################################################################
 # Initial orbit parameters
+# TODO define min and max parameters with respect to launch_window and arrival_window using analytical ephemerides
 a0_max, a0_min = c.a_earth_km, c.a_earth_km
 e0_max, e0_min = c.e_earth, c.e_earth
 i0_max, i0_min = 0, 0
@@ -27,6 +59,7 @@ om0_max, om0_min = 0, 0
 f0_ref = 259.7 * np.pi / 180
 # f0_max, f0_min = 274.6 * np.pi / 180, 245.3 * np.pi / 180
 f0_max, f0_min = f0_ref, f0_ref
+
 # Final orbit parameters
 af_max, af_min = c.a_mars_km, c.a_mars_km
 ef_max, ef_min = c.e_mars, c.e_mars
@@ -37,15 +70,20 @@ ff_ref = 1 * np.pi / 180
 # ff_max, ff_min = 10.5 * np.pi / 180, -8.5 * np.pi / 180
 ff_max, ff_min = ff_ref, ff_ref
 true_final_f = False
+
 # Flag that specifies if orbit is elliptical or circular
 elliptical_initial = True if e0_max > 0 else False
 elliptical_final = True if ef_max > 0 else False
+########################################################################################################################
 
+
+########################################################################################################################
 # Specify spacecraft and engine parameters
+########################################################################################################################
 m_dry = 10000
 m_prop = 3000
 m0 = m_dry + m_prop
-fixed_step = False  # NOTE: on big runs, definitely used adaptive step
+fixed_step = False  # NOTE: on big runs, definitely use adaptive step
 variable_power = False
 if variable_power:
     power_min, power_max = 3.4, 12.5  # kW
@@ -59,19 +97,43 @@ else:
     T_max_kN = 1.2 * 1e-3  # 2 x HERMeS engines with 37.5 kW  # 21.8 mg/s for one thruster
     Isp = 2780
 isp_chemical = 370  # for the final correction burns
+########################################################################################################################
 
+
+########################################################################################################################
 # Specify the indices of the input array that should be used
-# input_indices = np.array([0, 1, 2, 3, 8, 9])  # ignore target, 2D [6 nodes]
-# input_indices = np.array([0, 1, 3, 4, 6, 7, 9, 10, 12, 13])  # inertial inputs, ignore Z components, 3D [10 nodes]
-# input_indices = np.array([0, 1, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13])  # keplerian inputs, ignore inclination [12 nodes]
-input_indices = np.array([0, 1, 3, 4, 5, 12, 13])  # keplerian inputs, ignore inclination, target [7]
-# input_indices = np.array([12, 13])  # mass and time [2]
+########################################################################################################################
+if n_dim == 2:
+    input_indices = np.array([0, 1, 2, 3, 8, 9])  # ignore target, 2D [6 nodes]
+    # input_indices = np.array([8, 9])  # mass and time, 2D [2]
+else:
+    # input_indices = np.array([0, 1, 3, 4, 6, 7, 9, 10, 12, 13])  # inertial inputs, ignore Z components, 3D [10 nodes]
+    # input_indices = np.array([0, 1, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13])  # keplerian inputs, ignore inclination [12 nodes]
+    input_indices = np.array([0, 1, 3, 4, 5, 12, 13])  # keplerian inputs, ignore inclination and target, 3D [7]
+    # input_indices = np.array([12, 13])  # mass and time, 3D [2]
 # input_indices = None  # all
-n_outputs = 2
+########################################################################################################################
 
-# Define scales for the state vectors to non-dimensionalize later
+
+########################################################################################################################
+# Define scale units for distance, time, mass and force for integration
+########################################################################################################################
+du = max(a0_max, af_max)
+tu = (du ** 3 / gm) ** 0.5
+mu = m0
+fu = mu * du / tu / tu
+if n_dim == 2:
+    state_scales = [du, du, du / tu, du / tu, mu]
+else:
+    state_scales = [du, du, du, du / tu, du / tu, du / tu, mu]
+########################################################################################################################
+
+
+########################################################################################################################
+# Define scales for the state vectors to non-dimensionalize the inputs and outputs of the neurocontroller
+########################################################################################################################
 input_frame = 'kep'  # 'kep', 'mee', 'car'
-r_scale, v_scale = c.a_earth_km, c.vp_earth_kms
+r_scale, v_scale = c.a_earth_km, c.vp_earth_kms  # TODO should the dimensionalization be with respect to something else?
 if input_frame == 'kep':
     if n_dim == 2:
         scales_in = np.array([r_scale, 1, np.pi, np.pi])
@@ -90,10 +152,14 @@ elif input_frame == 'car':
 else:
     raise ValueError('Undefined input frame')
 scales_in = np.hstack((scales_in, scales_in, 1., 1.))  # add twice for current plus target, then add 1 for mass, time
-if n_outputs == 2:
-    scales_out = np.array([[-np.pi / 3, np.pi / 3], [0, 1]])  # thrust angle, thrust throttle
+
+max_thrust_angle = np.pi / 3
+if n_dim == 2:
+    # thrust angle, thrust throttle
+    scales_out = np.array([[-max_thrust_angle, max_thrust_angle], [0, 1]])
 else:
-    scales_out = np.array([[-np.pi, np.pi], [-np.pi, np.pi], [0, 1]])  # alpha, beta, throttle
+    # alpha, beta, throttle
+    scales_out = np.array([[-max_thrust_angle, max_thrust_angle], [-max_thrust_angle, max_thrust_angle], [0, 1]])
 
 # Specify output activation type (NOTE: this does not automatically change with the NEAT config file)
 out_node_scales = np.array([[-1, 1], [-1, 1], [-1, 1]])
@@ -101,18 +167,31 @@ out_node_scales = np.array([[-1, 1], [-1, 1], [-1, 1]])
 # Optionally specify a set of angle choices, and have an output node for each - categorical classification
 use_multiple_angle_nodes = False
 angle_choices = np.array([0, np.pi / 2, np.pi, 3 * np.pi / 2])
+########################################################################################################################
 
+
+########################################################################################################################
 # For the GA (not NEAT), define network size
+########################################################################################################################
 n_in = 10
 n_hid = 4
 n_out = 2
+########################################################################################################################
 
+
+########################################################################################################################
 # Define integration parameters
+########################################################################################################################
 rtol = 1e-8       # relative tolerance
 atol = 1e-8       # absolute tolerance
-num_nodes = 10    # number of thrust updates
 n_steps = 20      # substeps between two nodes
+segment_duration_sec = 14. * c.day_to_sec  # the time between thrust updates assuming no outages occur
+########################################################################################################################
 
+
+########################################################################################################################
+# Define penalties used in fitness function
+########################################################################################################################
 # Choose to add a penalty for going too close to the central body in the fitness function
 rp_penalty = True
 min_allowed_rp = c.a_earth_km * 0.9
@@ -122,19 +201,17 @@ rp_penalty_multiplier = 10000
 no_thrust_penalty = True
 
 # Choose a penalty for trajectories that leave the allowable zone
-big_penalty = 20000
+big_penalty = 10000
 
 # Choose maximum energy to allow before stopping integration
-max_energy = - c.u_sun_km3s2 / 2 / max(a0_max, af_max) * 0.5
-min_energy = - c.u_sun_km3s2 / 2 / min(a0_min, af_min) * 1.2
+max_energy = - c.u_sun_km3s2 / 2 / (max(a0_max, af_max) * 1.5)
+min_energy = - c.u_sun_km3s2 / 2 / (min(a0_min, af_min) * 0.5)
+########################################################################################################################
 
-# Choose whether missed thrust events occur or not, and scale time-between-events and recovery-duration
-# missed_thrust_allowed = False
-# missed_thrust_tbe_factor = 1.  # make less than one for events to be more frequent
-# missed_thrust_rd_factor = 1.  # make greater than one for events to be more severe
-segment_duration_sec = 14. * c.day_to_sec  # the time between thrust updates assuming no outages occur
 
-# Specify if a Lambert arc should be computed to match the final state
+########################################################################################################################
+# Specify post-transfer capture maneuver settings
+########################################################################################################################
 do_terminal_lambert_arc = False
 n_terminal_steps = 50
 position_tol = 0.1  # outer non-dimensional position
@@ -150,32 +227,15 @@ vallado_numiter = 50  # Number of iterations allowed in vallado()
 capture_short = True
 if capture_short:
     capture_time_low = 1  # minimum time of Lambert arc, days
-    capture_time_high = 60  # maximum time of Lambert arc, days
+    capture_time_high = 20  # maximum time of Lambert arc, days
 else:
     capture_time_low = 300  # minimum time of Lambert arc, days
     capture_time_high = 1000  # maximum time of Lambert arc, days
+########################################################################################################################
 
-# Define initial and final bodies and times
-init_body = 'earth'
-target_body = 'mars'
-central_body = 'sun'
-t0_str = '2019 Sep 27 00:00:00'
-tf_str = '2022 Jun 23 00:00:00'
-fmt = '%Y %b %d %H:%M:%S'
-ordinal_to_julian = 1721424.5
-t0 = datetime.strptime(t0_str, fmt).toordinal() + ordinal_to_julian
-tf = datetime.strptime(tf_str, fmt).toordinal() + ordinal_to_julian
-times = np.linspace(t0, tf, num_nodes)
-times_jd1950_jc = (times - c.reference_date_jd1950) * c.day_to_jc
-tf = (tf - t0) * c.day_to_sec
-t0 = 0
 
-# Define scale units for distance, time, mass and force
-du = max(a0_max, af_max)
-tu = (du ** 3 / gm) ** 0.5
-mu = m0
-fu = mu * du / tu / tu
-state_scales = [du, du, du, du / tu, du / tu, du / tu, mu]
-
+########################################################################################################################
 # Specify thrust vector appearance
+########################################################################################################################
 arrows_with_heads = True
+########################################################################################################################

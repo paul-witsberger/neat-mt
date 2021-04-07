@@ -25,7 +25,7 @@ using namespace std;
 using namespace boost::numeric::odeint;
 using namespace boost::python;
 
-typedef std::vector<double> state_type;
+typedef std::vector<double> stateType;
 typedef std::vector<double> Vec;
 typedef std::vector<Vec> Mat;
 
@@ -97,6 +97,11 @@ void print(Mat &mat) {
 }
 
 
+double mag2(const Vec &vec) {
+	return pow(vec[0] * vec[0] + vec[1] * vec[1], 0.5);
+}
+
+
 double mag3(const Vec &vec) {
 	return pow(vec[0] * vec[0] + vec[1] * vec[1] + vec[2] * vec[2], 0.5);
 }
@@ -125,6 +130,21 @@ Mat transpose(const Mat &mat) {
 }
 
 
+Vec rotateVNCtoInertial2D(const Vec &vec, const Vec &state) {
+	Vec product;
+	Mat dcm, dcm_t;
+	// Calculate angle of velocity vector
+	double thetaV = std::atan2(state[3], state[2]);
+	// Construct DCM
+	dcm.push_back({ cos(thetaV), -sin(thetaV)});
+	dcm.push_back({ sin(thetaV),  cos(thetaV)});
+	// dcm_t = transpose(dcm);
+	// Apply rotation
+	product = dcm * vec;
+	return product;
+}
+
+
 Vec rotateVNCtoInertial3D(const Vec &vec, const Vec &state) {
 	Vec r_vec, v_vec, h_vec, v_hat, n_hat, c_hat, product;
 	Mat dcm, dcm_t;
@@ -147,15 +167,14 @@ Vec rotateVNCtoInertial3D(const Vec &vec, const Vec &state) {
 }
 
 
-// 2BP Equations of Motion
-class eom2BPScaled {
+class eom2BPScaled3D {
 
 public:
-	eom2BPScaled(std::vector<double> param){
+	eom2BPScaled3D(std::vector<double> param){
 		
 	}
 
-	void operator()(const state_type &x, state_type &dxdt, const double /* t */) {
+	void operator()(const stateType &x, stateType &dxdt, const double /* t */) {
 		// calculate auxiliary variables
 		double r = sqrt((x[0] * x[0]) + (x[1] * x[1]) + (x[2] * x[2]));
 		double r3 = r * r * r;
@@ -170,75 +189,77 @@ public:
 	}
 };
 
-class eom2BPScaled_variable_power {
-	double g0, gm, mdry, power_reference, power_min, power_max;
-	std::vector<double> thrust_body, thrust_coef, isp_coef;
+
+class eom2BPScaledVariablePower3D {
+	double g0, gm, mDry, powerReference, powerMin, powerMax;
+	std::vector<double> thrustBody, thrustCoef, ispCoef;
 
 public:
-	eom2BPScaled_variable_power(std::vector<double> param) {
+	eom2BPScaledVariablePower3D(std::vector<double> param) {
 		g0 = 9.80665;
-		mdry = param[0];
-		thrust_body.assign({ param[1], param[2] , param[3] });
-		power_reference = param[4];
-		power_min = param[5];
-		power_max = param[6];
-		thrust_coef.assign({ param[7], param[8], param[9], param[10], param[11] });
-		isp_coef.assign({ param[12], param[13], param[14], param[15], param[16] });
+		thrustBody.assign({param[0], param[1], param[2]});
+		mDry = param[3];
+		powerReference = param[4];
+		powerMin = param[5];
+		powerMax = param[6];
+		thrustCoef.assign({param[7], param[8], param[9], param[10], param[11]});
+		ispCoef.assign({param[12], param[13], param[14], param[15], param[16]});
 	}
 
-	double thrust_fcn(double power) {
-		return (thrust_coef[4] * pow(power, 4) + thrust_coef[3] * pow(power, 3) + thrust_coef[2] * pow(power, 2) + thrust_coef[1] * power + thrust_coef[0]);
+	double computeThrust(double power) {
+		return (thrustCoef[4] * pow(power, 4) + thrustCoef[3] * pow(power, 3) + thrustCoef[2] * pow(power, 2) + thrustCoef[1] * power + thrustCoef[0]);
 	}
 
-	double isp_fcn(double power) {
-		return (isp_coef[4] * pow(power, 4) + isp_coef[3] * pow(power, 3) + isp_coef[2] * pow(power, 2) + isp_coef[1] * power + isp_coef[0]);
+	double computeIsp(double power) {
+		return (ispCoef[4] * pow(power, 4) + ispCoef[3] * pow(power, 3) + ispCoef[2] * pow(power, 2) + ispCoef[1] * power + ispCoef[0]);
 	}
 
-	void operator()(const state_type &x, state_type &dxdt, const double /* t */) {
+	void operator()(const stateType &x, stateType &dxdt, const double /* t */) {
 		// calculate auxiliary variables
-		double r, r3, thrust, ve;
+		double r, r3, thrustMag, ve;
+		std::vector<double> thrustInertial;
+
 		r = sqrt((x[0] * x[0]) + (x[1] * x[1]) + (x[2] * x[2]));
 		r3 = r * r * r;
-		thrust = sqrt((thrust_body[0] * thrust_body[0]) + (thrust_body[1] * thrust_body[1]) + (thrust_body[2] * thrust_body[2]));
-		std::vector<double> thrust_inertial;
+		thrustMag = sqrt((thrustBody[0] * thrustBody[0]) + (thrustBody[1] * thrustBody[1]) + (thrustBody[2] * thrustBody[2]));
 
 		// check if mass has dropped below minimum allowable value or thrust is zero
-		if (x[6] <= mdry || thrust <= 0.0) {
-			thrust_inertial.assign({ 0.0, 0.0, 0.0 });
-			thrust = 0.0;
+		if (x[6] <= mDry || thrustMag <= 0.0) {
+			thrustInertial.assign({0.0, 0.0, 0.0});
+			thrustMag = 0.0;
 			ve = 1000.0;
 		}
 
 		// otherwise, calculate available power and adjust thrust accordingly
 		else {
 			// check if availble power is below minimum usable threshold
-			double au_to_km = 149597870.7;
-			double power_available = power_reference * pow((au_to_km / r), 2);
-			if (power_available < power_min) {
-				thrust_inertial.assign({ 0.0, 0.0, 0.0 });
-				thrust = 0.0;
+			double auToKm = 149597870.7;
+			double powerAvailable = powerReference * pow((auToKm / r), 2);
+			if (powerAvailable < powerMin) {
+				thrustInertial.assign({0.0, 0.0, 0.0});
+				thrustMag = 0.0;
 				ve = 1000.0;
 			}
 
 			// otherwise, see if thrust vector needs to be updated
 			else {
-				double rotation_angle, isp, eta, thrust_produced, power_used;
+				double rotationAngle, isp, eta, thrustProduced, powerUsed;
 				// rotate thrust from spacecraft frame into inertial frame
-				rotation_angle = atan2(x[4], x[3]);
-				thrust_inertial.assign({ cos(rotation_angle) * thrust_body[0] - sin(rotation_angle) * thrust_body[1],
-									 sin(rotation_angle) * thrust_body[0] + cos(rotation_angle) * thrust_body[1],
-									 0.0});
+				rotationAngle = atan2(x[4], x[3]);
+				thrustInertial.assign({cos(rotationAngle) * thrustBody[0] - sin(rotationAngle) * thrustBody[1],
+									   sin(rotationAngle) * thrustBody[0] + cos(rotationAngle) * thrustBody[1],
+									   0.0});
 
-				power_used = std::min(power_available, power_max);
-				thrust_produced = thrust_fcn(power_used);
-				isp = isp_fcn(power_used);
+				powerUsed = std::min(powerAvailable, powerMax);
+				thrustProduced = computeThrust(powerUsed);
+				isp = computeIsp(powerUsed);
 				ve = g0 * isp;
-				if (thrust_produced < thrust) {
+				if (thrustProduced < thrustMag) {
 					// calculate new Isp based on available power
-					eta = thrust_produced / thrust;
-					thrust_inertial[0] *= eta;
-					thrust_inertial[1] *= eta;
-					thrust_inertial[2] *= eta;
+					eta = thrustProduced / thrustMag;
+					thrustInertial[0] *= eta;
+					thrustInertial[1] *= eta;
+					thrustInertial[2] *= eta;
 				}
 			}
 		}
@@ -247,36 +268,37 @@ public:
 		dxdt[0] = x[3];
 		dxdt[1] = x[4];
 		dxdt[2] = x[5];
-		dxdt[3] = -1 / r3 * x[0] + thrust_inertial[0] / x[6];
-		dxdt[4] = -1 / r3 * x[1] + thrust_inertial[1] / x[6];
-		dxdt[5] = -1 / r3 * x[2] + thrust_inertial[2] / x[6];
-		dxdt[6] = -thrust * 1000.0 / ve;
+		dxdt[3] = -1 / r3 * x[0] + thrustInertial[0] / x[6];
+		dxdt[4] = -1 / r3 * x[1] + thrustInertial[1] / x[6];
+		dxdt[5] = -1 / r3 * x[2] + thrustInertial[2] / x[6];
+		dxdt[6] = -thrustMag * 1000.0 / ve;
 	}
 };
 
-class eom2BPScaled_constant_power {
-	double gm, mdry, ve, thrust_mag;
-	std::vector<double> thrust_body;
+
+class eom2BPScaledConstantPower3D {
+	double gm, mDry, ve, thrustMag;
+	std::vector<double> thrustBody;
 
 public:
-	eom2BPScaled_constant_power(std::vector<double> param) {
-		ve = param[0];
-		mdry = param[1];
-		thrust_body.assign({ param[2], param[3] , param[4] });
-		thrust_mag = sqrt((thrust_body[0] * thrust_body[0]) + (thrust_body[1] * thrust_body[1]) + (thrust_body[2] * thrust_body[2]));
+	eom2BPScaledConstantPower3D(std::vector<double> param) {
+		thrustBody.assign({param[0], param[1] , param[2]});
+		ve = param[3];
+		mDry = param[4];
+		thrustMag = sqrt((thrustBody[0] * thrustBody[0]) + (thrustBody[1] * thrustBody[1]) + (thrustBody[2] * thrustBody[2]));
 	}
 
-	void operator()(const state_type &x, state_type &dxdt, const double /* t */) {
+	void operator()(const stateType &x, stateType &dxdt, const double /* t */) {
 		double r, r3;
-		std::vector<double> thrust_inertial;
+		std::vector<double> thrustInertial;
 
 		// calculate radius
 		r = sqrt((x[0] * x[0]) + (x[1] * x[1]) + (x[2] * x[2]));
 		r3 = r * r * r;
 
 		// check if mass has dropped below minimum allowable value or thrust is zero
-		if (x[6] <= mdry || thrust_mag <= std::numeric_limits<double>::min()) {
-			thrust_inertial.assign({ 0.0, 0.0, 0.0 });
+		if (x[6] <= mDry || thrustMag <= std::numeric_limits<double>::min()) {
+			thrustInertial.assign({0.0, 0.0, 0.0});
 		}
 
 		// otherwise, rotate thrust vector to inertial frame
@@ -294,34 +316,35 @@ public:
 			// thrust_inertial.assign({ (cos(psi) * cos(phi) - sin(psi) * sin(phi) * cos(theta)) * thrust_body[0] + (cos(psi) * sin(phi) + sin(psi) * cos(theta) * cos(phi)) * thrust_body[1] + (sin(psi) * sin(theta)) * thrust_body[2] },
 			// 	{ -(sin(psi) * cos(phi) - cos(psi) * sin(phi) * cos(theta)) * thrust_body[0] - (sin(psi) * sin(phi) - cos(psi) * cos(theta) * cos(phi)) * thrust_body[1] + (cos(psi) * sin(theta)) * thrust_body[2] },
 			// 	{ (sin(theta) * sin(phi)) * thrust_body[0] - (sin(theta) * cos(phi)) * thrust_body[1] + (cos(theta)) * thrust_body[2] });
-			thrust_inertial = rotateVNCtoInertial3D(thrust_body, x);
+			thrustInertial = rotateVNCtoInertial3D(thrustBody, x);
 		}
 
 		// EOMs (3 velocity, 3 accel w/ grav and thrust, 1 mass)
 		dxdt[0] = x[3];
 		dxdt[1] = x[4];
 		dxdt[2] = x[5];
-		dxdt[3] = -1.0 / r3 * x[0] + thrust_inertial[0] / x[6];
-		dxdt[4] = -1.0 / r3 * x[1] + thrust_inertial[1] / x[6];
-		dxdt[5] = -1.0 / r3 * x[2] + thrust_inertial[2] / x[6];
-		dxdt[6] = -thrust_mag * 1000.0 / ve;
+		dxdt[3] = -1.0 / r3 * x[0] + thrustInertial[0] / x[6];
+		dxdt[4] = -1.0 / r3 * x[1] + thrustInertial[1] / x[6];
+		dxdt[5] = -1.0 / r3 * x[2] + thrustInertial[2] / x[6];
+		dxdt[6] = -thrustMag * 1000.0 / ve;
 		if (isnan(dxdt[6])) {
 			cout << "dmdt is nan" << endl;
-			cout << "thrust_mag = " << thrust_mag << endl;
+			cout << "thrust_mag = " << thrustMag << endl;
 			cout << "ve = " << ve << endl;
 			cout << "m = " << x[6] << endl;
 		}
 	}
 };
 
-class eom2BPScaled_stm {
+
+class eom2BPScaledSTM3D {
 
 public:
-	eom2BPScaled_stm(std::vector<double> param) {
+	eom2BPScaledSTM3D(std::vector<double> param) {
 		
 	}
 
-	void operator()(const state_type &x, state_type &dxdt, const double /* t */) {
+	void operator()(const stateType &x, stateType &dxdt, const double /* t */) {
 		double r, r3, r5, A[6][6], A21[3][3], stm[6][6], dstmdt[6][6];
 		int counter;
 
@@ -394,51 +417,178 @@ public:
 	}
 };
 
-class myexception : public exception {
-	virtual const char* what() const throw()
-	{
-		return "gotcha - custom error in C++";
+
+class eom2BPScaled2D {
+
+public:
+	eom2BPScaled2D(std::vector<double> param){
+		
+	}
+
+	void operator()(const stateType &x, stateType &dxdt, const double /* t */) {
+		// calculate auxiliary variables
+		double r = sqrt((x[0] * x[0]) + (x[1] * x[1]));
+		double r3 = r * r * r;
+		
+		// EOMs (3 velocity, 3 accel w/ gravity only)
+		dxdt[0] = x[2];
+		dxdt[1] = x[3];
+		dxdt[2] = -1 / r3 * x[0];
+		dxdt[3] = -1 / r3 * x[1];
 	}
 };
 
-// Used to pull states out of the integration
+
+class eom2BPScaledVariablePower2D {
+	double g0, mDry, powerReference, powerMin, powerMax;
+	std::vector<double> thrustBody, thrustCoef, ispCoef;
+
+public:
+	eom2BPScaledVariablePower2D(std::vector<double> param) {
+		g0 = 9.80665;
+		thrustBody.assign({param[0], param[1]});
+		mDry = param[2];
+		powerReference = param[3];
+		powerMin = param[4];
+		powerMax = param[5];
+		thrustCoef.assign({param[6], param[7], param[8], param[9], param[10]});
+		ispCoef.assign({param[11], param[12], param[13], param[14], param[15]});
+	}
+
+	double computeThrust(double power) {
+		return (thrustCoef[4] * pow(power, 4) + thrustCoef[3] * pow(power, 3) + thrustCoef[2] * pow(power, 2) + thrustCoef[1] * power + thrustCoef[0]);
+	}
+
+	double computeIsp(double power) {
+		return (ispCoef[4] * pow(power, 4) + ispCoef[3] * pow(power, 3) + ispCoef[2] * pow(power, 2) + ispCoef[1] * power + ispCoef[0]);
+	}
+
+	void operator()(const stateType &x, stateType &dxdt, const double /* t */) {
+		// calculate auxiliary variables
+		double r, r3, thrustMag, ve;
+		std::vector<double> thrustInertial;
+
+		r = sqrt((x[0] * x[0]) + (x[1] * x[1]));
+		r3 = r * r * r;
+		thrustMag = sqrt((thrustBody[0] * thrustBody[0]) + (thrustBody[1] * thrustBody[1]));
+		
+		// check if mass has dropped below minimum allowable value or thrust is zero
+		if (x[4] <= mDry || thrustMag <= 0.0) {
+			thrustInertial.assign({0.0, 0.0});
+			thrustMag = 0.0;
+			ve = 1000.0;
+		}
+
+		// otherwise, calculate available power and adjust thrust accordingly
+		else {
+			// check if availble power is below minimum usable threshold
+			double auToKm = 149597870.7;
+			double powerAvailable = powerReference * pow((auToKm / r), 2);
+			if (powerAvailable < powerMin) {
+				thrustInertial.assign({0.0, 0.0});
+				thrustMag = 0.0;
+				ve = 1000.0;
+			}
+
+			// otherwise, see if thrust vector needs to be updated
+			else {
+				double rotationAngle, isp, eta, thrustProduced, powerUsed;
+				// rotate thrust from spacecraft frame into inertial frame
+				rotationAngle = atan2(x[3], x[2]);
+				thrustInertial.assign({cos(rotationAngle) * thrustBody[0] - sin(rotationAngle) * thrustBody[1],
+									   sin(rotationAngle) * thrustBody[0] + cos(rotationAngle) * thrustBody[1]});
+
+				powerUsed = std::min(powerAvailable, powerMax);
+				thrustProduced = computeThrust(powerUsed);
+				isp = computeIsp(powerUsed);
+				ve = g0 * isp;
+				if (thrustProduced < thrustMag) {
+					// calculate new Isp based on available power
+					eta = thrustProduced / thrustMag;
+					thrustInertial[0] *= eta;
+					thrustInertial[1] *= eta;
+				}
+			}
+		}
+
+		// EOMs (3 velocity, 3 accel w/ grav and thrust, 1 mass)
+		dxdt[0] = x[2];
+		dxdt[1] = x[3];
+		dxdt[2] = -1 / r3 * x[0] + thrustInertial[0] / x[4];
+		dxdt[3] = -1 / r3 * x[1] + thrustInertial[1] / x[4];
+		dxdt[4] = -thrustMag * 1000.0 / ve;
+	}
+};
+
+
+class eom2BPScaledConstantPower2D {
+	double gm, mDry, ve, thrustMag;
+	std::vector<double> thrustBody;
+
+public:
+	eom2BPScaledConstantPower2D(std::vector<double> param) {
+		thrustBody.assign({param[0], param[1]});
+		ve = param[2];
+		mDry = param[3];
+		thrustMag = sqrt((thrustBody[0] * thrustBody[0]) + (thrustBody[1] * thrustBody[1]));
+	}
+
+	void operator()(const stateType &x, stateType &dxdt, const double /* t */) {
+		double r, r3;
+		std::vector<double> thrustInertial;
+
+		// calculate radius
+		r = sqrt((x[0] * x[0]) + (x[1] * x[1]));
+		r3 = r * r * r;
+
+		// check if mass has dropped below minimum allowable value or thrust is zero
+		if (x[4] <= mDry || thrustMag <= std::numeric_limits<double>::min())
+			thrustInertial.assign({0.0, 0.0});
+		// otherwise, rotate thrust vector to inertial frame
+		else
+			thrustInertial = rotateVNCtoInertial2D(thrustBody, x);
+
+		// EOMs (3 velocity, 3 accel w/ grav and thrust, 1 mass)
+		dxdt[0] = x[2];
+		dxdt[1] = x[3];
+		dxdt[2] = -1.0 / r3 * x[0] + thrustInertial[0] / x[4];
+		dxdt[3] = -1.0 / r3 * x[1] + thrustInertial[1] / x[4];
+		dxdt[4] = -thrustMag * 1000.0 / ve;
+		if (isnan(dxdt[4])) {
+			cout << "dmdt is nan" << endl;
+			cout << "thrust_mag = " << thrustMag << endl;
+			cout << "ve = " << ve << endl;
+			cout << "m = " << x[4] << endl;
+		}
+	}
+};
+
+
 struct getStateAndTime {
-	std::vector<state_type> &m_states;
+	std::vector<stateType> &m_states;
 	std::vector<double> &m_times;
 
-	getStateAndTime(std::vector<state_type> &states, std::vector<double> &times) : m_states(states), m_times(times) {}
+	getStateAndTime(std::vector<stateType> &states, std::vector<double> &times) : m_states(states), m_times(times) {}
 
-	void operator()(const state_type &x, double t) {
-		// Check if energy is too high or orbit is too small
-		/*double r = sqrt((x[0] * x[0]) + (x[1] * x[1]) + (x[2] * x[2]));
-		if (r < 10000.0) {
-			myexception ex;
-			throw ex;
-		}
-		double v = sqrt((x[3] * x[3]) + (x[4] * x[4]) + (x[5] * x[5]));
-		double eps = (v * v) / 2 - 398600.0 / r;
-		if (eps > 2.0) {
-			myexception ex;
-			throw ex;
-		}*/
-
+	void operator()(const stateType &x, double t) {
 		// Store new values
 		m_states.push_back(x);
 		m_times.push_back(t);
 	}
 };
 
+
 struct TBP {
 	// Put function into format python can understand and the propagate
-	boost::python::list propPy(boost::python::list &ic, boost::python::list &ti, boost::python::list &p, int state_dim, int t_dim,
-							   int p_dim, double rtol, double atol, double step_size, int integrator_type, int eom_type) {
+	boost::python::list propPy(boost::python::list &ic, boost::python::list &ti, boost::python::list &p, int stateDim, int tDim,
+							   int pDim, double rTol, double aTol, double stepSize, int integratorType, int eomType, int nDim) {
 
-		typedef std::vector<double> state_type;
-		std::vector<state_type> statesAndTimes;
+		typedef std::vector<double> stateType;
+		std::vector<stateType> statesAndTimes;
 
-		state_type IC(state_dim, 0);
-		state_type t(t_dim, 0);
-		std::vector<double> param(p_dim, 0);
+		stateType IC(stateDim, 0);
+		stateType t(tDim, 0);
+		std::vector<double> param(pDim, 0);
 
 		// Transform inputs
 		for (int i = 0; i < len(ic); ++i) {
@@ -454,67 +604,84 @@ struct TBP {
 		}
 
 		// Propagate
-		statesAndTimes = prop(IC, t, param, state_dim, t_dim, p_dim, rtol, atol, step_size, integrator_type, eom_type);
+		statesAndTimes = prop(IC, t, param, rTol, aTol, stepSize, integratorType, eomType, nDim);
 
 		// Create python list from data to return
 		return toTwoDimPythonList(statesAndTimes);
 	}
 
 	// Propagation function
-	std::vector<vector<double >> prop(vector<double> ic, vector<double> t, vector<double> param, int state_dim, int t_dim,
-									  int p_dim, double rtol, double atol, double step_size, int integrator_type, int eom_type) {
+	std::vector<vector<double >> prop(vector<double> ic, vector<double> t, vector<double> param, double rTol, double aTol,
+									  double stepSize, int integratorType, int eomType, int nDim) {
 		using namespace std;
 		using namespace boost::numeric::odeint;
 
-		typedef std::vector<double> state_type;
-		std::vector<state_type> statesAndTimes;
+		typedef std::vector<double> stateType;
+		std::vector<stateType> statesAndTimes;
 
 		// Set vectors intermediate steps during integration
 		std::vector<double> tOut;
-		std::vector<state_type> statesOut;
+		std::vector<stateType> statesOut;
 
 		// Determine step size (forward or backward) and set initial step size
-		double h = t[1] > t[0] ? step_size : -step_size;
+		double h = t[1] > t[0] ? stepSize : -stepSize;
 
 		// Set integrator type -> Currently set at rk78
-		double relTol = rtol;
-		double absTol = atol;
-		typedef runge_kutta_fehlberg78<state_type> rk78;
+		double relTol = rTol;
+		double absTol = aTol;
+		typedef runge_kutta_fehlberg78<stateType> rk78;
 		auto stepper = make_controlled<rk78>(absTol, relTol);
 		
 		// Create eom to integrate
-		if (eom_type == 0) {
-			eom2BPScaled_constant_power eom(param);
-			if (integrator_type == 0) {
+		if ((eomType == 0) && (nDim == 3)) {
+			eom2BPScaledConstantPower3D eom(param);
+			if (integratorType == 0) {
 				size_t steps = integrate_const(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
-			}
-			else if (integrator_type == 1) {
+			} else if (integratorType == 1) {
 				size_t steps = integrate_adaptive(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
 			}
-		} else if (eom_type == 1) {
-			eom2BPScaled_variable_power eom(param);
-			if (integrator_type == 0) {
+		} else if ((eomType == 1) && (nDim == 3)) {
+			eom2BPScaledVariablePower3D eom(param);
+			if (integratorType == 0) {
 				size_t steps = integrate_const(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
-			}
-			else if (integrator_type == 1) {
+			} else if (integratorType == 1) {
 				size_t steps = integrate_adaptive(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
 			}
-		}
-		else if (eom_type == 2) {
-			eom2BPScaled_stm eom(param);
-			if (integrator_type == 0) {
+		} else if ((eomType == 2) && (nDim == 3)) {
+			eom2BPScaledSTM3D eom(param);
+			if (integratorType == 0) {
 				size_t steps = integrate_const(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
-			}
-			else if (integrator_type == 1) {
+			} else if (integratorType == 1) {
 				size_t steps = integrate_adaptive(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
 			}
-		}
-		else if (eom_type == 3) {
-			eom2BPScaled eom(param);
-			if (integrator_type == 0) {
+		} else if ((eomType == 3) && (nDim == 3)) {
+			eom2BPScaled3D eom(param);
+			if (integratorType == 0) {
 				size_t steps = integrate_const(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
+			} else if (integratorType == 1) {
+				size_t steps = integrate_adaptive(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
 			}
-			else if (integrator_type == 1) {
+		} else if ((eomType == 0) && (nDim == 2)) {
+			eom2BPScaledConstantPower2D eom(param);
+			if (integratorType == 0) {
+				size_t steps = integrate_const(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
+			} else if (integratorType == 1) {
+				size_t steps = integrate_adaptive(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
+			}
+		} else if ((eomType == 1) && (nDim == 2)) {
+			eom2BPScaledVariablePower2D eom(param);
+			if (integratorType == 0) {
+				size_t steps = integrate_const(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
+			} else if (integratorType == 1) {
+				size_t steps = integrate_adaptive(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
+			}
+		} else if ((eomType == 2) && (nDim == 2)) {
+			// not defined
+		} else if ((eomType == 3) && (nDim == 2)) {
+			eom2BPScaled2D eom(param);
+			if (integratorType == 0) {
+				size_t steps = integrate_const(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
+			} else if (integratorType == 1) {
 				size_t steps = integrate_adaptive(stepper, eom, ic, t[0], t[1], h, getStateAndTime(statesOut, tOut));
 			}
 		}
@@ -559,6 +726,7 @@ struct TBP {
 	}
 };
 
+
 struct maneuvers {
 	boost::python::list lambert(double gm, boost::python::list &r1, boost::python::list &r2, double dtsec, bool direct)
 	{
@@ -582,12 +750,6 @@ struct maneuvers {
 		if (printToFile)
 			fclose(outfile);
 
-		// int n = sizeof(v1) / sizeof(v1[0]);
-		// std::vector<double> vecV1(v1, v1 + n);
-		// std::vector<double> vecV2(v2, v2 + n);
-
-		// boost::python::list listV1 = toPythonList(vecV1);
-		// boost::python::list listV2 = toPythonList(vecV2);
 		boost::python::list listV1, listV2;
 
 		for (int i = 0; i < 3; ++i) {
@@ -625,27 +787,9 @@ struct maneuvers {
     }
 };
 
+
 BOOST_PYTHON_MODULE(boost_tbp) {
 	class_<TBP>("TBP").def("prop", &TBP::propPy);
 	class_<maneuvers>("maneuvers").def("lambert", &maneuvers::lambert);
 };
 
-// void export_prop()
-// {
-// 	boost::python::class_<TBP>("TBP").def("prop", &TBP::propPy);
-// }
-
-
-// int main() {
-// 	Vec vec_vnc = {1, 0, 0};
-// 	Vec state = {0, 1e8, 0, -29, 0, 0};
-// 	Vec vec_i = rotateVNCtoInertial3D(vec_vnc, state);
-
-// 	cout << "VNC:\n";
-// 	print(vec_vnc);
-// 	cout << "Inertial:\n";
-// 	print(vec_i);
-
-// 	cout << endl;
-// 	return 0;
-// }

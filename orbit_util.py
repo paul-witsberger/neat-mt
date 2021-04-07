@@ -82,7 +82,7 @@ def coe4_from_rv(r_vec: np.ndarray, v_vec: np.ndarray, gm: float = gm) -> np.nda
     return coe
 
 
-@jit(nopython=True, cache=True)
+# @jit(nopython=True, cache=True)
 def period_from_inertial(state: np.ndarray, gm: float = gm, max_time_sec: float = 10 * year_to_sec) -> float:
     """
     Computes the period of an orbit given its 3D state vector.
@@ -91,14 +91,15 @@ def period_from_inertial(state: np.ndarray, gm: float = gm, max_time_sec: float 
     :param max_time_sec:
     :return:
     """
-    r_vec, v_vec = state[:3], state[3:]
-    r, v = mag3(r_vec), mag3(v_vec)
+    r_vec, v_vec = state[:tc.n_dim], state[tc.n_dim:]
+    mag = mag2 if tc.n_dim == 2 else mag3
+    r, v = mag(r_vec), mag(v_vec)
 
     eps = v * v / 2 - gm / r
 
     # Eccentricity
     e_vec = ((v * v - gm / r) * r_vec - np.dot(r_vec, v_vec) * v_vec) / gm
-    e = mag3(e_vec)
+    e = mag(e_vec)
 
     # Semi-major axis
     tol = 1e-6
@@ -225,7 +226,7 @@ def cross(left: np.ndarray, right: np.ndarray) -> np.ndarray:
     return np.array([x, y, z])
 
 
-@jit(nopython=True, cache=True)
+# @jit(nopython=True, cache=True)
 def inertial_to_keplerian_3d(state: np.ndarray, gm: float = gm) -> np.ndarray:
     """
     Convert a 3D state vector from inertial to Keplerian
@@ -354,15 +355,18 @@ def keplerian_to_perifocal_2d(state: np.ndarray, gm: float = gm, mean_or_true: s
     :param mean_or_true:
     :return:
     """
-    if mean_or_true == 'true':
-        a, e, w, f = state
-    else:
-        a, e, w, m = state
-        f = np.array([mean_to_true_anomaly(mm, e) for mm in m], float)
+    a, e, w, f = state
+    if mean_or_true == 'mean':
+        m = f
+        if len(state.shape) > 1:
+            f = np.array([mean_to_true_anomaly(mm, e) for mm in m], float)
+        else:
+            f = mean_to_true_anomaly(m, e)
     p = a * (1 - e ** 2)
-    r_p = np.hstack((np.array(p * np.cos(f) / (1 + e * np.cos(f))), np.array(p * np.sin(f) / (1 + e * np.cos(f)))))
-    v_p = np.hstack((np.array(-np.sqrt(gm / p) * np.sin(f)), np.array(np.sqrt(gm / p) * (e + np.cos(f)))))
-    return np.hstack((r_p, v_p))
+    state_p = np.empty(4, dtype=float)
+    state_p[:2] = p * np.cos(f) / (1 + e * np.cos(f)), p * np.sin(f) / (1 + e * np.cos(f))
+    state_p[2:] = -np.sqrt(gm / p) * np.sin(f), np.sqrt(gm / p) * (e + np.cos(f))
+    return state_p
 
 
 # TODO njit this
@@ -1507,18 +1511,19 @@ def propagate_capture(maneuvers: list, state_0: np.ndarray, m0: float, du: float
     else:
         raise ValueError('Unknown or unprepared outputs from capture function.')
 
+    mag = mag2 if tc.n_dim == 2 else mag3
     if len(maneuvers) == 3:
         dv1_vec, dv2_vec, tof12 = maneuvers
-        dv3_vec, tof23 = np.zeros(3), 0.
-        dv1_mag, dv2_mag, dv3_mag = mag3(dv1_vec), mag3(dv2_vec), 0.
+        dv3_vec, tof23 = np.zeros(tc.n_dim), 0.
+        dv1_mag, dv2_mag, dv3_mag = mag(dv1_vec), mag(dv2_vec), 0.
         n_maneuvers = 2
     else:
         dv1_vec, dv2_vec, dv3_vec, tof12, tof23 = maneuvers
-        dv1_mag, dv2_mag, dv3_mag = mag3(dv1_vec), mag3(dv2_vec), mag3(dv3_vec)
+        dv1_mag, dv2_mag, dv3_mag = mag(dv1_vec), mag(dv2_vec), mag(dv3_vec)
         n_maneuvers = 3
     tof12 *= c.day_to_sec
-    y = np.empty((n_maneuvers, 7))
-    full_traj = np.empty(((n_maneuvers - 1) * tc.n_terminal_steps + 1, 8))
+    y = np.empty((n_maneuvers, 2 * tc.n_dim + 1))
+    full_traj = np.empty(((n_maneuvers - 1) * tc.n_terminal_steps + 1, 2 * tc.n_dim + 2))
     # ti = np.empty(n_maneuvers + 1)
 
     # Compute masses after each maneuver
@@ -1528,7 +1533,7 @@ def propagate_capture(maneuvers: list, state_0: np.ndarray, m0: float, du: float
 
     step_type, eom_type = 0, 3  # fixed step, TBP only
 
-    state_1, state_2, state_3 = np.empty((3, 6))
+    state_1, state_2, state_3 = np.empty((3, 2 * tc.n_dim))
 
     # Before and after initial maneuver on "original" orbit
     # traj01m = tbp.prop(list(state_0 / state_scales), [0., -tf / tu], [], 6, 2, 0, tol, tol, step_size / tu, step_type,
@@ -1539,30 +1544,33 @@ def propagate_capture(maneuvers: list, state_0: np.ndarray, m0: float, du: float
     # traj01p = (np.array(traj01p)[:, 1:] * state_scales).T
 
     # Transfer from initial location to 2nd maneuver location
-    state_1[:3], state_1[3:6] = state_0[:3], state_0[3:6] + dv1_vec
-    traj12 = tbp.prop(list(state_1 / tc.state_scales[:-1]), [0., tof12 / tc.tu], [], 6, 2, 0, tc.rtol, tc.atol,
-                      tof12 / (tc.n_terminal_steps - 1) / tc.tu, step_type, eom_type)
+    state_1[:tc.n_dim], state_1[tc.n_dim:2 * tc.n_dim] = state_0[:tc.n_dim], state_0[3:3 + tc.n_dim] + dv1_vec[:tc.n_dim]
+    traj12 = tbp.prop(list(state_1 / tc.state_scales[:-1]), [0., tof12 / tc.tu], [], 2 * tc.n_dim, 2, 0, tc.rtol,
+                      tc.atol, tof12 / (tc.n_terminal_steps - 1) / tc.tu, step_type, eom_type, tc.n_dim)
     traj12 = np.array(traj12)
 
     # Compute state after 2nd maneuver
-    state_2[:3], state_2[3:6] = traj12[-1, 1:4] * tc.state_scales[:3], traj12[-1, 4:7] * tc.state_scales[3:6] + dv2_vec
+    state_2[:tc.n_dim], state_2[tc.n_dim:2 * tc.n_dim] = traj12[-1, 1:1 + tc.n_dim] * tc.state_scales[:tc.n_dim],\
+                                                         traj12[-1, (1 + tc.n_dim):(1 + 2 * tc.n_dim)] * \
+                                                         tc.state_scales[tc.n_dim:2 * tc.n_dim] + dv2_vec[:tc.n_dim]
 
     # Compute propagate until 3rd maneuver if necessary, and save states
     if n_maneuvers == 3:
-        traj23 = tbp.prop(list(state_2 / tc.state_scales[:-1]), [0., tof23 / tc.tu], [], 6, 2, 0, tc.rtol, tc.atol,
-                          tof23 / (tc.n_terminal_steps - 1) / tc.tu, step_type, eom_type)
+        traj23 = tbp.prop(list(state_2 / tc.state_scales[:-1]), [0., tof23 / tc.tu], [], 2 * tc.n_dim, 2, 0, tc.rtol,
+                          tc.atol, tof23 / (tc.n_terminal_steps - 1) / tc.tu, step_type, eom_type, tc.n_dim)
         traj23 = np.array(traj23)
         traj23[:, 0] += tof12 / tc.tu
 
-        state_3[:3] = traj23[-1, 1:4] * tc.state_scales[:3]
-        state_3[3:6] = traj23[-1, 4:7] * tc.state_scales[3:6] + dv3_vec
+        state_3[:tc.n_dim] = traj23[-1, 1:1 + tc.n_dim] * tc.state_scales[:tc.n_dim]
+        state_3[tc.n_dim:2 * tc.n_dim] = traj23[-1, 1 + tc.n_dim:1 + 2 * tc.n_dim] * \
+                                         tc.state_scales[tc.n_dim:2 * tc.n_dim] + dv3_vec[:tc.n_dim]
         y[:, :-1] = state_1, state_2, state_3
         y[:, -1] = m1, m2, m3
         full_traj[:-1, :-1] = traj12, traj23
         full_traj[:tc.n_terminal_steps, -1] = m1 / tc.mu
         full_traj[tc.n_terminal_steps:-1, -1] = m2 / tc.mu
         full_traj[-1, :-1] = traj23[-1]
-        full_traj[-1, 4:7] += dv3_vec / tc.state_scales[3:6]
+        full_traj[-1, 1 + tc.n_dim:1 + 2 * tc.n_dim] += dv3_vec[:tc.n_dim] / tc.state_scales[tc.n_dim:2 * tc.n_dim]
         full_traj[-1, -1] = m3 / tc.mu
         # ti[:] = 0, tof12, tof23
 
@@ -1572,7 +1580,7 @@ def propagate_capture(maneuvers: list, state_0: np.ndarray, m0: float, du: float
         full_traj[:-1, :-1] = traj12
         full_traj[:-1, -1] = m1 / tc.mu
         full_traj[-1, :-1] = traj12[-1]
-        full_traj[-1, 4:7] += dv2_vec / tc.state_scales[3:6]
+        full_traj[-1, 1 + tc.n_dim:1 + 2 * tc.n_dim] += dv2_vec[:tc.n_dim] / tc.state_scales[tc.n_dim:2 * tc.n_dim]
         full_traj[-1, -1] = m2 / tc.mu
         # ti[:] = 0, tof12
 

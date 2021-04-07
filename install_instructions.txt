@@ -1,0 +1,120 @@
+Install/build Boost and compile boost_tbp in Windows
+====================================================
+
+1. Make sure a virtualenv is set up (can do this from PyCharm).
+	-	Make sure research_env includes numpy, scipy, numba, matplotlib, h5py, graphviz, pyyaml
+	-	Make sure graphviz is installed with dot.exe on the path.
+2. Download boost_1_73_0.zip, move to C:/Users/Paul/Documents/codes, and extract to its own folder
+3. Open a Visual Studio command prompt and navigate to Boost folder.
+	-	The name should be like: x64 Native Tools Command Prompt for VS 2019
+	-	If necessary, download Visual Studio Community Edition, then go to Visual Studio Installer, and make sure to check C++ tools
+4. Build Boost.
+	-	.\bootstrap.bat --with-python-version=3.8
+	-	.\b2.exe --with-python address-model=64 variant=release link=shared --build-type=complete
+5. In codes/ folder, make boost_tbp_build/ and boost_tbp_bin/
+
+****    To compile boost_tbp only    ****
+
+6. Navigate to boost_tbp_build in a normal command prompt.
+7. Make sure the proper CMakeLists.txt is located in neat-mt.
+8. Configure, generate, and build.
+	-	build.bat
+
+	OR
+	
+	-	cmake -A x64 C:\Users\pawit\OneDrive\Documents\Classes\Research\neat-mt
+	-	cmake --build . --config Release --target install
+
+Paths for boost_tbp in Windows
+==============================
+Boost Root: C:/Users/Paul/Documents/codes/boost_1_73_0
+Boost Include Dir: <Boost Root>
+Boost Libraries: <Boost Root>/stage/lib/*.lib
+
+Python 3.8 Root: C:/Program Files/Python38
+Python 3.8 Include Dir: <Python Root>/include
+Python 3.8 Libraries: <Python Root>/libs/python*.lib
+
+Python Virtualenv: C:/Users/Paul/Documents/research_env/Lib/site-packages/boost_tbp
+
+Vallado Root: C:/Users/Paul/Documents/codes/src/vallado
+Vallado Include Dir: <Vallado Root>
+
+Source Dir: C:/Users/Paul/OneDrive/Documents/Classes/Research/neat-mt
+Binaries Dir: C:/Users/Paul/Documents/codes/boost_tbp_bin
+
+
+
+
+
+Install/build boost and compile boost_tbp in Ubuntu
+===================================================
+
+1. Make sure cmake, gcc, and graphviz are installed.
+	-	sudo apt install gcc
+	-	snap info cmake
+	-	sudo snap install cmake --channel=3.20/candidate --classic
+	-	sudo apt install graphviz
+2. Make sure a Python virtualenv is set up.
+	-	cd ~
+	-	mkdir .virtualenvs
+	-	sudo apt install python3-pip
+	-	pip3 install virtualenvwrapper
+	-	sudo apt install vim
+	-	vim .bashrc
+		-	At the bottom, add the following lines:
+			# virtualenvwrapper settings:
+			export WORKON_HOME=$HOME/.virtualenvs
+			VIRTUALENVWRAPPER_PYTHON=/usr/bin/python3
+			. ~/.local/bin/virtualenvwrapper.sh
+	-	export PATH="/home/paul/.local/bin:$PATH"
+	-	source ~/.bashrc
+	-	mkvirtualenv research_env
+	-	(Optional) workon research_env
+	-	pip3 install numpy scipy matplotlib numba pyyaml h5py graphviz
+3. Make sure neatfast is also properly installed as a Python library.
+4. Download Boost from website.
+5. Extract in desired folder. (e.g. Documents/boost/)
+	-	tar -xf boost_1_73_0.tar.gz
+6. Navigate to folder.
+	-	cd boost_1_73_0.tar.gz
+7. Bootstrap and then build Boost.
+	-	./bootstrap.sh --with-python=/usr/bin/python3.8 --with-python-version=3.8 --with-python-root=/usr/bin/python3.8 --with-toolset=gcc
+	-	./b2 --with-python address-model=64 variant=release link=shared python-debugging=off threading=multi stage
+
+****    To compile boost_tbp only    ****
+
+8. Make sure the proper CMakeLists.txt is located in ~/Documents/neat-mt
+9. Navigate to build folder for boost_tbp.
+	-	cd ../../build
+10. Run build.sh.
+	-	./build.sh.
+
+OR
+
+10. Call cmake at the location of the CMakeLists.txt file to configure and generate.
+	-	cmake -DCMAKE_BUILD_TYPE=RELEASE ~/Documents/neat-mt
+11. Achieve optimum level of success.
+	-	make
+12. Copy libboost_tbp.so to neat-mt, and rename to boost_tbp.so
+	-	cp libboost_tbp.so ../neat-mt/boost_tbp.so
+
+
+Paths for boost_tbp in Ubuntu
+=============================
+Python binary:  /usr/bin/python3.8
+Python library: /usr/lib/python3.8/config-3.8-x86_64-linux-gnu/*python*3*8*.so
+Python include: /usr/include/python3.8
+
+Python env: /home/paul/.virtualenvs/research_env
+
+Boost root: ~/Documents/boost/boost_1_73_0
+Boost libraries: <Boost root>/stage/lib/*.so
+Boost include: <Boost root>
+
+Vallado root: ~/Documents/build/vallado
+Vallado include: <Vallado root>
+
+Source dir: ~/Documents/neat-mt
+Source: <Source dir>/boost_tbp.cpp
+Install: <Source>

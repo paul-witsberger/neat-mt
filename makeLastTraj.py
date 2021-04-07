@@ -8,8 +8,9 @@ with open('.numba_config.yaml', 'w') as f:
     dump(lines, f, Dumper=Dumper)
 
 # Choose which config to use
-_config_name = 'coarse'
-# _config_name = 'intermediate'
+# _config_name = 'tmp'
+# _config_name = 'coarse'
+_config_name = 'intermediate'
 # _config_name = 'final'
 
 make_neat_network_diagram(config_name=_config_name)
