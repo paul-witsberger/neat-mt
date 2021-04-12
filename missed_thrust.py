@@ -152,31 +152,39 @@ def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float,
 
     # Calculate error in states
     dr_tol_close = c.r_soi_mars / c.au_to_km
-    dr_tol_far = 50 * dr_tol_close  # TODO set the multiplier in traj_config
+    dr_tol_far = 30 * dr_tol_close  # TODO set the multiplier in traj_config
     mag = ou.mag2 if tc.n_dim == 2 else ou.mag3
     yf_mag = mag(yf[tc.n_dim:])
     dr = mag(yf[:tc.n_dim] - y[:tc.n_dim]) / c.au_to_km
     dv = mag(yf[tc.n_dim:] - y[tc.n_dim:]) / yf_mag
-    drp = abs(rp2 - rp1) / tc.a0_min
-    dra = abs(ra2 - ra1) / tc.a0_min
+    drp = abs(rp2 - rp1) / c.au_to_km
+    dra = abs(ra2 - ra1) / c.au_to_km
+    da = abs(a2 - a1) / c.au_to_km
+    de = abs(e2 - e1)
     dw = abs(ou.fix_angle(w2 - w1, np.pi, -np.pi) / np.pi)
     df = abs(ou.fix_angle(f2 - f1, np.pi, -np.pi) / np.pi)
     dwf = abs(ou.fix_angle(f2 + w2 - f1 - w1, np.pi, -np.pi) / np.pi)
-    penalty = np.empty(4)
     close = False
-    states = np.array([drp, dra, dw, df])
     if dr > dr_tol_far:
         # Far away
-        penalty[:] = 100
-        # penalty = np.array([100, 100, 100, 100], dtype=np.float64)
+        # penalty[:] = 100
+        states = np.array([drp, dra, dw, df])
+        penalty = np.array([30, 30, 30, 30], dtype=np.float64)
     elif dr > dr_tol_close:
         # Intermediate
         # print('Intermediate')
-        penalty[:] = 10
-        # penalty = np.array([10, 10, 10, 10, 5, 5], dtype=np.float64)
+        # penalty[:] = 20
+        # states = np.array([drp, dra, dw, df])
+        # penalty = np.array([10, 10, 10, 10], dtype=np.float64)
+        states = np.array([dr, dv])
+        penalty = np.array([20, 20], dtype=np.float64)
     else:
         # Within sphere-of-influence
-        penalty[:] = 0
+        # penalty[:] = 0
+        # states = np.array([drp, dra, dw, df], dtype=np.float64)
+        # penalty = np.array([1, 1, 1, 1], dtype=np.float64)
+        states = np.array([dr, dv])
+        penalty = np.array([0, 0])
         close = True
 
     # Set cost function based on final trajectory type
@@ -184,8 +192,10 @@ def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float,
         state_weights = penalty
     else:
         state_weights = np.array([penalty[0], penalty[1], 0., 0.])
-    mass_weight = 5
-    time_weight = 100
+    mass_weight = 2
+    time_weight = 50  # Lambert arc t_ratio = ~0.02
+    # Observation: making mass_weight and/or time_weight too high relative to the penalties will prevent the algorithm
+    # from going from intermediate to close
 
     weighted = states * state_weights
     squares = np.square(weighted)
@@ -193,6 +203,7 @@ def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float,
     f = 0.
     for i in range(len(states)):
         f += max(squares[i], abses[i])
+    # f += sum(abses)
     f += m_ratio * mass_weight + t_ratio * time_weight
 
     # Penalize going too close to central body

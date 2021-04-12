@@ -30,7 +30,7 @@ def run(config_name: str = 'default', init_state: list = None, parallel: bool = 
     # Run
     if parallel:
         num_workers = os.cpu_count() - 16
-        num_workers = 60
+        num_workers = 32
         timeout = None
         pe = neat.ParallelEvaluator(num_workers, eval_traj_neat, timeout=timeout)
         winner, best_pop = pop.run(pe.evaluate, n=max_gens, num_workers=24)

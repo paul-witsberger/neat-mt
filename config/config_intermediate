@@ -1,14 +1,14 @@
 # The `NEAT` section specifies parameters particular to the NEAT algorithm
 # or the experiment itself.  This is the only required section.
 [NEAT]
-pop_size               = 500
+pop_size               = 1000
 reset_on_extinction    = 0
 fitness_plot_frequency = 10
 fitness_criterion = mean
 fitness_threshold = 0
-num_cases = 10
+num_cases = 1
 do_terminal_lambert_arc  = True
-missed_thrust_allowed    = True
+missed_thrust_allowed    = False
 missed_thrust_tbe_factor = 1
 missed_thrust_rd_factor  = 3
 
@@ -16,7 +16,8 @@ missed_thrust_rd_factor  = 3
 num_inputs              = 6
 num_hidden              = 5
 num_outputs             = 2
-initial_connection      = partial_nodirect 0.8
+# initial_connection      = partial_nodirect 0.8
+initial_connection      = full_nodirect
 feed_forward            = True
 # TODO tinker with these
 compatibility_disjoint_coefficient = 1.0
@@ -66,10 +67,10 @@ enabled_mutate_rate     = 0
 [DefaultSpeciesSet]
 # compatibility_threshold = 2.63
 # compatibility_threshold = 3.33
-compatibility_threshold = 3.85
+compatibility_threshold = 3.7
 
 [DefaultStagnation]
-species_fitness_func = mean
+species_fitness_func = max
 max_stagnation = 50
 
 [DefaultReproduction]

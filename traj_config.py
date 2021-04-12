@@ -201,7 +201,7 @@ rp_penalty_multiplier = 10000
 no_thrust_penalty = True
 
 # Choose a penalty for trajectories that leave the allowable zone
-big_penalty = 10000
+big_penalty = 100000
 
 # Choose maximum energy to allow before stopping integration
 max_energy = - c.u_sun_km3s2 / 2 / (max(a0_max, af_max) * 1.5)
@@ -222,12 +222,12 @@ capture_low_not_high = False  # If true, capture into low circular orbit; if fal
 capture_current_not_optimal = True  # If true, capture at current location; if false, capture at optimal point on orbit
 max_final_time = 20 * c.day_to_sec
 r_limit_soi = 1  # Limit in SOI radii of how far away a capture maneuver can occur
-vallado_rtol = 1e-14  # Tolerance for vallado() convergence
+vallado_rtol = 1e-12  # Tolerance for vallado() convergence
 vallado_numiter = 50  # Number of iterations allowed in vallado()
 capture_short = True
 if capture_short:
     capture_time_low = 1  # minimum time of Lambert arc, days
-    capture_time_high = 20  # maximum time of Lambert arc, days
+    capture_time_high = 30 # maximum time of Lambert arc, days
 else:
     capture_time_low = 300  # minimum time of Lambert arc, days
     capture_time_high = 1000  # maximum time of Lambert arc, days
