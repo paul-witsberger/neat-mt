@@ -27,12 +27,14 @@ ordinal_to_julian = 1721424.5
 t0 = datetime.strptime(t0_str, fmt).toordinal() + ordinal_to_julian
 ckout = datetime.strptime(ckout_str, fmt).toordinal() + ordinal_to_julian
 tf = datetime.strptime(tf_str, fmt).toordinal() + ordinal_to_julian
+ckout_duration_sec = (ckout - t0) * c.day_to_sec
 times = np.array([t0, tf])
 times_jd1950_jc = (times - c.reference_date_jd1950) * c.day_to_jc
-tf = (tf - t0) * c.day_to_sec
+tf = (tf - t0) * c.day_to_sec - ckout_duration_sec
 t0 = 0
 launch_window = 0 * c.day_to_jc
 arrival_window = 0 * c.day_to_jc
+launch_c3 = 3.12
 ########################################################################################################################
 
 
@@ -82,8 +84,8 @@ elliptical_final = True if ef_max > 0 else False
 ########################################################################################################################
 # Specify spacecraft and engine parameters
 ########################################################################################################################
-m_dry = 10000
-m_prop = 3000
+m_dry = 2643
+m_prop = 657
 m0 = m_dry + m_prop
 fixed_step = False  # NOTE: on big runs, definitely use adaptive step
 variable_power = False
@@ -96,8 +98,8 @@ if variable_power:
     T_max_kN = thrust_power_coef * np.array([1, power_max, power_max ** 2, power_max ** 3, power_max ** 4]) * 1e-3
     Isp = isp_power_coef * np.array([1, power_max, power_max ** 2, power_max ** 3, power_max ** 4])
 else:
-    T_max_kN = 1.2 * 1e-3  # 2 x HERMeS engines with 37.5 kW  # 21.8 mg/s for one thruster
-    Isp = 2780
+    T_max_kN = 5.62e-4  # 2 x HERMeS engines with 37.5 kW  # 21.8 mg/s for one thruster
+    Isp = 1850
 isp_chemical = 370  # for the final correction burns
 ########################################################################################################################
 

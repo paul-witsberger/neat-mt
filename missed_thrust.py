@@ -116,10 +116,6 @@ def compute_bcs() -> (np.ndarray, np.ndarray):
     # Get planet states at bounds
     states_coe = c.ephem(elems, planets, times)
 
-    # See if there's a checkout period and launch C3. If so, apply C3 and integrate to end of checkout.
-
-
-
     # Convert keplerian coordinates to inertial
     if tc.n_dim == 2:
         states_coe_2d = np.empty([4, 2, 2])
@@ -133,6 +129,23 @@ def compute_bcs() -> (np.ndarray, np.ndarray):
         # states_coe[4, :, :] = 0.  # longitude of ascending node
         state_0_i = ou.keplerian_to_inertial_3d(states_coe[:, 0, 0], mean_or_true='mean')
         state_f_i = ou.keplerian_to_inertial_3d(states_coe[:, 1, 1], mean_or_true='mean')
+
+    # See if there's a non-zero launch C3
+    if tc.launch_c3 > 0:
+        v_inf = np.sqrt(tc.launch_c3)
+        v_vec = state_0_i[tc.n_dim:]
+        v_mag = ou.mag2(v_vec) if tc.n_dim == 2 else ou.mag3(v_vec)
+        v_hat = v_vec / v_mag
+        state_0_i[tc.n_dim:] = (v_inf + v_mag) * v_hat  # assume that launch C3 is in direction of planetary motion
+
+    # See if there's a checkout period
+    if tc.ckout_duration_sec > 0:
+        eom_type = 3  # simple 2BP integration
+        integrator_type = 1  # adaptive step
+        traj = tbp.prop(list(state_0_i / tc.state_scales[:-1]), [0, tc.ckout_duration_sec / tc.tu], [], 2 * tc.n_dim, 2,
+                        0, tc.rtol, tc.atol, 0.1, integrator_type, eom_type, tc.n_dim)
+        state_0_i = np.array(traj)[-1, 1:] * tc.state_scales[:-1]
+
     return state_0_i, state_f_i, times
 
 
