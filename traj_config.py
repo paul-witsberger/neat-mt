@@ -29,8 +29,8 @@ times = np.array([t0, tf])
 times_jd1950_jc = (times - c.reference_date_jd1950) * c.day_to_jc
 tf = (tf - t0) * c.day_to_sec
 t0 = 0
-launch_window = 0 * c.day_to_sec
-arrival_window = 0 * c.day_to_sec
+launch_window = 0 * c.day_to_jc
+arrival_window = 0 * c.day_to_jc
 ########################################################################################################################
 
 
@@ -111,7 +111,7 @@ else:
     # input_indices = np.array([0, 1, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13])  # keplerian inputs, ignore inclination [12 nodes]
     input_indices = np.array([0, 1, 3, 4, 5, 12, 13])  # keplerian inputs, ignore inclination and target, 3D [7]
     # input_indices = np.array([12, 13])  # mass and time, 3D [2]
-# input_indices = None  # all
+input_indices = np.arange(4 * n_dim + 2)  # all
 ########################################################################################################################
 
 
@@ -162,7 +162,10 @@ else:
     scales_out = np.array([[-max_thrust_angle, max_thrust_angle], [-max_thrust_angle, max_thrust_angle], [0, 1]])
 
 # Specify output activation type (NOTE: this does not automatically change with the NEAT config file)
-out_node_scales = np.array([[-1, 1], [-1, 1], [-1, 1]])
+if n_dim == 2:
+    out_node_scales = np.array([[-1, 1], [-1, 1]])
+else:
+    out_node_scales = np.array([[-1, 1], [-1, 1], [-1, 1]])
 
 # Optionally specify a set of angle choices, and have an output node for each - categorical classification
 use_multiple_angle_nodes = False
@@ -185,7 +188,7 @@ n_out = 2
 rtol = 1e-8       # relative tolerance
 atol = 1e-8       # absolute tolerance
 n_steps = 20      # substeps between two nodes
-segment_duration_sec = 14. * c.day_to_sec  # the time between thrust updates assuming no outages occur
+segment_duration_sec = 7. * c.day_to_sec  # the time between thrust updates assuming no outages occur
 ########################################################################################################################
 
 
@@ -198,7 +201,9 @@ min_allowed_rp = c.a_earth_km * 0.9
 rp_penalty_multiplier = 10000
 
 # Choose to add a penalty for not thrusting at all (just staying in initial orbit)
-no_thrust_penalty = True
+is_no_thrust_penalty = True
+no_thrust_penalty = 1000
+no_thrust_tol = 0.2  # ratio of distance away from initial orbit wrt final orbit
 
 # Choose a penalty for trajectories that leave the allowable zone
 big_penalty = 100000

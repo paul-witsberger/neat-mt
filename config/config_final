@@ -1,31 +1,29 @@
-# The `NEAT` section specifies parameters particular to the NEAT algorithm
-# or the experiment itself.  This is the only required section.
 [NEAT]
-pop_size               = 20
-reset_on_extinction    = 0
-fitness_plot_frequency = 5
-fitness_criterion      = mean
-fitness_threshold      = 0
-num_cases = 1
-do_terminal_lambert_arc  = False
-missed_thrust_allowed    = False
+pop_size                 = 400
+reset_on_extinction      = 0
+fitness_plot_frequency   = 5
+fitness_criterion        = mean
+fitness_threshold        = 0
+num_cases                = 20
+do_terminal_lambert_arc  = True
+missed_thrust_allowed    = True
 missed_thrust_tbe_factor = 0.75
-missed_thrust_rd_factor  = 1.5
+missed_thrust_rd_factor  = 1.33
 
 [DefaultGenome]
-num_inputs              = 7
-num_hidden              = 3
+num_inputs              = 10
+num_hidden              = 5
 num_outputs             = 2
-initial_connection      = full_nodirect
+initial_connection      = partial_nodirect 0.7
 feed_forward            = True
 
 compatibility_disjoint_coefficient = 1.0
-compatibility_weight_coefficient   = 0.6
+compatibility_weight_coefficient   = 0.65
 
-conn_add_prob           = 0.005
-conn_delete_prob        = 0.005
-node_add_prob           = 0.005
-node_delete_prob        = 0.005
+conn_add_prob           = 0.01
+conn_delete_prob        = 0.01
+node_add_prob           = 0.01
+node_delete_prob        = 0.01
 
 activation_default      = random
 activation_default_out  = clamped
@@ -36,14 +34,6 @@ aggregation_default     = sum
 aggregation_options     = sum
 aggregation_mutate_rate = 0.0
 
-bias_max_value          = 1.5
-bias_min_value          = -1.5
-bias_init_mean          = 0.0
-bias_init_stdev         = 0.4
-bias_mutate_rate        = 0.1
-bias_replace_rate       = 0.005
-bias_mutate_power       = 0.05
-
 response_init_mean      = 1.0
 response_init_stdev     = 0.0
 response_replace_rate   = 0.0
@@ -52,25 +42,32 @@ response_mutate_power   = 0.0
 response_max_value      = 1.0
 response_min_value      = 0.0
 
-weight_max_value        = 1.5
-weight_min_value        = -1.5
+bias_max_value          = 30
+bias_min_value          = -30
+bias_init_mean          = 0.0
+bias_init_stdev         = 1.0
+bias_mutate_rate        = 0.9
+bias_replace_rate       = 0.01
+bias_mutate_power       = 0.01
+
+weight_max_value        = 30
+weight_min_value        = -30
 weight_init_mean        = 0.0
-weight_init_stdev       = 0.1
-weight_mutate_rate      = 0.2
+weight_init_stdev       = 1
+weight_mutate_rate      = 0.9
 weight_replace_rate     = 0.005
-weight_mutate_power     = 0.1
+weight_mutate_power     = 0.01
 
 enabled_default         = True
-enabled_mutate_rate     = 0
+enabled_mutate_rate     = 0.005
 
 [DefaultSpeciesSet]
-compatibility_threshold = 2.63
-# compatibility_threshold = 3.15
+compatibility_threshold = 3.95
 
 [DefaultStagnation]
-species_fitness_func = max
-max_stagnation = 35
+species_fitness_func    = max
+max_stagnation          = 100
 
 [DefaultReproduction]
-elitism            = 1
-survival_threshold = 0.6
+elitism                 = 5
+survival_threshold      = 0.8

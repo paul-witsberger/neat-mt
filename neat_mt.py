@@ -6,11 +6,6 @@ from missed_thrust import eval_traj_neat
 from builder import make_last_traj, make_neat_network_diagram
 import cProfile
 import time
-import numpy as np
-
-
-def dummy_fitness_func(genome, config):
-    return -np.random.rand() * 100
 
 
 def run(config_name: str = 'default', init_state: list = None, parallel: bool = True,
@@ -35,7 +30,7 @@ def run(config_name: str = 'default', init_state: list = None, parallel: bool = 
         pe = neat.ParallelEvaluator(num_workers, eval_traj_neat, timeout=timeout)
         winner, best_pop = pop.run(pe.evaluate, n=max_gens, num_workers=24)
     else:
-        se = neat.SerialEvaluator(dummy_fitness_func)
+        se = neat.SerialEvaluator(eval_traj_neat)
         winner, best_pop = pop.run(se.evaluate, n=max_gens)
 
     print('\n\n' + '*' * 60 + '\n' + '*' * 24 + '  FINISHED  ' + '*' * 24 + '\n' + '*' * 60 + '\n\n')
@@ -71,6 +66,11 @@ def prepare_population(_pop: neat.population.Population) -> list:
     for k in _pop.species.species.keys():
         _pop.species.species[k].last_improved = 1
         _pop.species.species[k].created = 1
+        _pop.species.species[k].fitness = None
+        _pop.species.species[k].adjusted_fitness = None
+        _pop.species.species[k].fitness_history = []
+        for g in _pop.species.species[k].members.values():
+            g.fitness = None
     _pop.best_genome = None
     _pop.generation = 1
     return [_pop.population, _pop.species, _pop.generation]
@@ -86,9 +86,9 @@ if __name__ == '__main__':
     # NOTE add -OO to configuration when running for slight speed improvement
     _get_timing = False
     _parallel = True
-    _max_gens = [0, 200, 0]
+    _max_gens = [0, 200, 200]
     _save_population = [True, True, True]
-    _load_population = [False, False, True]
+    _load_population = [False, False, False]
     pop = None
 
     t_start = time.time()
@@ -107,7 +107,7 @@ if __name__ == '__main__':
                           init_state=phase_init_state,
                           parallel=_parallel,
                           max_gens=_max_gens[phase],
-                          save_population=_save_population[0])
+                          save_population=_save_population[phase])
 
     t_end = time.time()
     print('\nTotal runtime = %.1f sec' % (t_end - t_start))

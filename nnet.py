@@ -144,8 +144,8 @@ class Neurocontroller:
             # thrust[0] = np.cos(alpha) * throttle  # velocity
             # thrust[1] = np.sin(alpha) * throttle  # anti-co-normal
             # thrust[2] = 0.                        # normal
-            thrust[1] = np.sin(alpha) * throttle   # co-normal
             thrust[0] = np.cos(alpha) * throttle    # velocity
+            thrust[1] = np.sin(alpha) * throttle   # co-normal
         else:
             alpha, beta, throttle = self.scaleOutputs(out)
             # TODO use this info to properly apply thrust

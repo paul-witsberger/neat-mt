@@ -11,7 +11,7 @@ import constants as c
 import traj_config as tc
 from missed_thrust import integrate_func_missed_thrust, traj_fit_func, compute_bcs
 from plotter import plot_traj_2d, plot_mass_history, plot_thrust_history, final_point, point_size
-from orbit_util import period_from_inertial, rotate_vnc_to_inertial_3d, mag3, keplerian_to_inertial_3d
+from orbit_util import period_from_inertial, rotate_vnc_to_inertial_3d, mag3, keplerian_to_inertial_2d
 import boost_tbp
 import warnings
 
@@ -39,34 +39,27 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
         raise NotImplementedError('Only NEAT is supported in recreate_traj_from_pkl()')
 
     # Generate a problem
-    y0, yf = compute_bcs()
+    y0, yf, _times = compute_bcs()
     y0 = np.hstack((y0, tc.m0))
-
-    # Create time vector
-    # ti = np.empty(config.num_nodes + 2)
-    # # ti = np.power(np.linspace(0, 1, num_nodes), 3 / 2) * (tf - t0) + t0
-    # ti[:-2] = np.linspace(tc.t0, tc.tf, config.num_nodes)
-    # ti[-2:] = ti[-3]
-    # ti /= tc.tu
 
     # Get the period of initial, final and target orbits, then integrate each of the trajectories
     tbp = boost_tbp.TBP()
     step_type, eom_type = 0, 3
     yinit_tf = period_from_inertial(y0[:-1], gm=tc.gm, max_time_sec=tc.max_final_time)
     ytarg_tf = period_from_inertial(yf, gm=tc.gm, max_time_sec=tc.max_final_time)
-    yinit = tbp.prop(list(y0[:-1] / tc.state_scales[:-1]), [tc.t0 / tc.tu, yinit_tf / tc.tu], [], len(y0) - 1, 2, 0,
-                     tc.rtol, tc.atol, (yinit_tf - tc.t0) / (tc.n_terminal_steps + 1) / tc.tu, step_type, eom_type,
+    yinit = tbp.prop(list(y0[:-1] / tc.state_scales[:-1]), [0, yinit_tf / tc.tu], [], len(y0) - 1, 2, 0,
+                     tc.rtol, tc.atol, yinit_tf / (tc.n_terminal_steps + 1) / tc.tu, step_type, eom_type,
                      tc.n_dim)
     yinit = (np.array(yinit)[:, 1:] * tc.state_scales[:-1]).T
-    y, times, is_outage, full_traj, maneuvers = integrate_func_missed_thrust(thrust_fcn, y0, yf, config, save_traj, True)
+    y, times, is_outage, full_traj, maneuvers = integrate_func_missed_thrust(thrust_fcn, y0, yf, _times, config, save_traj, True)
     if not save_traj:
         return
     yfinal_tf = period_from_inertial(y[-1, :-1], gm=tc.gm, max_time_sec=tc.max_final_time)
-    yfinal = tbp.prop(list(y[-1, :-1] / tc.state_scales[:-1]), [tc.t0 / tc.tu, yfinal_tf / tc.tu], [], len(y0) - 1, 2, 0,
-                      tc.rtol, tc.atol, float((yfinal_tf - tc.t0) / (tc.n_terminal_steps + 1) / tc.tu), step_type, eom_type, tc.n_dim)
+    yfinal = tbp.prop(list(y[-1, :-1] / tc.state_scales[:-1]), [0, yfinal_tf / tc.tu], [], len(y0) - 1, 2, 0,
+                      tc.rtol, tc.atol, float(yfinal_tf / (tc.n_terminal_steps + 1) / tc.tu), step_type, eom_type, tc.n_dim)
     yfinal = (np.array(yfinal)[:, 1:] * tc.state_scales[:-1]).T
-    ytarg = tbp.prop(list(yf / tc.state_scales[:-1]), [tc.t0 / tc.tu, ytarg_tf / tc.tu], [], len(y0) - 1, 2, 0,
-                     tc.rtol, tc.atol, float((ytarg_tf - tc.t0) / (tc.n_terminal_steps + 1) / tc.tu), step_type, eom_type, tc.n_dim)
+    ytarg = tbp.prop(list(yf / tc.state_scales[:-1]), [0, ytarg_tf / tc.tu], [], len(y0) - 1, 2, 0,
+                     tc.rtol, tc.atol, float(ytarg_tf / (tc.n_terminal_steps + 1) / tc.tu), step_type, eom_type, tc.n_dim)
     ytarg = (np.array(ytarg)[:, 1:] * tc.state_scales[:-1]).T
 
     # Calculate thrust vectors throughout transfer trajectory
@@ -123,11 +116,15 @@ def recreate_traj_from_pkl(fname: str, neat_net: bool = True, print_mass: bool =
                   scale=q_scale_capture, **quiver_opts)
 
     # Plot Mars after the capture
-    tf_jc = (times[-1] - times[-3]) * tc.tu * c.sec_to_day * c.day_to_jc + tc.times_jd1950_jc[-1]
-    mars_post_capture = c.ephem(['a', 'e', 'i', 'w', 'O', 'M'], [tc.target_body], np.array([tf_jc]))
-    mars_post_capture[2] = 0.
-    mars_post_capture = keplerian_to_inertial_3d(mars_post_capture, tc.gm, 'mean')[:3] / c.au_to_km
+
+    tf_jc = (times[-1] - times[-3]) * tc.tu * c.sec_to_day * c.day_to_jc + _times[-1]
+    # tf_jc = times[-1] * tc.tu * c.sec_to_day * c.day_to_jc
+
+    mars_post_capture = c.ephem(['a', 'e', 'w', 'O', 'M'], [tc.target_body], np.array([tf_jc]))
+    mars_post_capture = np.array([mars_post_capture[0], mars_post_capture[1], sum(mars_post_capture[2:4]), mars_post_capture[4]])
+    mars_post_capture = keplerian_to_inertial_2d(mars_post_capture, tc.gm, 'mean') / c.au_to_km
     ax.scatter(mars_post_capture[0], mars_post_capture[1], edgecolor='red', facecolor='none', s=point_size*1.5)
+
     ax.scatter(y[-3, 0] / c.au_to_km, y[-3, 1] / c.au_to_km, edgecolor='none', facecolor=final_point, s=point_size)
     ax.scatter(y[-1, 0] / c.au_to_km, y[-1, 1] / c.au_to_km, edgecolor=final_point, facecolor='none', s=point_size)
 
@@ -213,9 +210,10 @@ def make_neat_network_diagram(config_name=None):
     """
     Creates a network diagram in .svg format showing the nodes and connections.
     """
-    from platform import system as sys
-    if sys() == 'Linux':
-        return
+    # from platform import system as sys
+    # if sys() == 'Linux':
+    #     return
+
     # Load network
     # ext = 'tmp' if config_name is None else config_name
     # ext = 'tmp'

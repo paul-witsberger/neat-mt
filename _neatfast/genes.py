@@ -71,15 +71,15 @@ class BaseGene(object):
         new_gene = self.__class__(self.key)
         for a in self._gene_attributes:
             # PAUL EDIT #
-            if a.name == 'weight' or a.name == 'bias':
-                # if random() > 0.667:
-                alpha = random()
-                setattr(new_gene, a.name, (getattr(self, a.name) * alpha + getattr(gene2, a.name) * (1 - alpha)))
-                # elif random() > 0.333:
-                #     setattr(new_gene, a.name, getattr(self, a.name))
-                # else:
-                #     setattr(new_gene, a.name, getattr(gene2, a.name))
-            else:
+            # if a.name == 'weight' or a.name == 'bias':
+            #     # if random() > 0.667:
+            #     alpha = random()
+            #     setattr(new_gene, a.name, (getattr(self, a.name) * alpha + getattr(gene2, a.name) * (1 - alpha)))
+            #     # elif random() > 0.333:
+            #     #     setattr(new_gene, a.name, getattr(self, a.name))
+            #     # else:
+            #     #     setattr(new_gene, a.name, getattr(gene2, a.name))
+            # else:
                 if random() > 0.5:
                     setattr(new_gene, a.name, getattr(self, a.name))
                 else:
