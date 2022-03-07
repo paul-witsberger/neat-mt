@@ -112,7 +112,15 @@ def compute_bcs() -> (np.ndarray, np.ndarray):
     times = tc.times_jd1950_jc.copy()
     times[0] += (np.random.rand() - 0.5) * tc.launch_window
     times[1] += (np.random.rand() - 0.5) * tc.arrival_window
+
+    # Get planet states at bounds
     states_coe = c.ephem(elems, planets, times)
+
+    # See if there's a checkout period and launch C3. If so, apply C3 and integrate to end of checkout.
+
+
+
+    # Convert keplerian coordinates to inertial
     if tc.n_dim == 2:
         states_coe_2d = np.empty([4, 2, 2])
         states_coe_2d[0:2] = states_coe[0:2]

@@ -8,6 +8,7 @@ import cProfile
 import time
 
 
+# Main function
 def run(config_name: str = 'default', init_state: list = None, parallel: bool = True,
         max_gens: int = None, save_population: bool = False) -> neat.population.Population:
     # Load the config file, which is assumed to live in the same directory as this script.
@@ -28,7 +29,7 @@ def run(config_name: str = 'default', init_state: list = None, parallel: bool = 
         num_workers = 32
         timeout = None
         pe = neat.ParallelEvaluator(num_workers, eval_traj_neat, timeout=timeout)
-        winner, best_pop = pop.run(pe.evaluate, n=max_gens, num_workers=24)
+        winner, best_pop = pop.run(pe.evaluate, n=max_gens, num_workers=num_workers)
     else:
         se = neat.SerialEvaluator(eval_traj_neat)
         winner, best_pop = pop.run(se.evaluate, n=max_gens)
