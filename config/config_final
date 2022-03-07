@@ -1,17 +1,17 @@
 [NEAT]
-pop_size                 = 400
+pop_size                 = 1000
 reset_on_extinction      = 0
 fitness_plot_frequency   = 5
 fitness_criterion        = mean
 fitness_threshold        = 0
-num_cases                = 20
-do_terminal_lambert_arc  = True
-missed_thrust_allowed    = True
+num_cases                = 1
+do_terminal_lambert_arc  = False
+missed_thrust_allowed    = False
 missed_thrust_tbe_factor = 0.75
 missed_thrust_rd_factor  = 1.33
 
 [DefaultGenome]
-num_inputs              = 10
+num_inputs              = 9
 num_hidden              = 5
 num_outputs             = 2
 initial_connection      = partial_nodirect 0.7

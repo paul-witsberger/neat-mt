@@ -140,11 +140,12 @@ def compute_bcs() -> (np.ndarray, np.ndarray):
 
     # See if there's a checkout period
     if tc.ckout_duration_sec > 0:
-        eom_type = 3  # simple 2BP integration
+        eom_type = 3  # Cartesian 2BP integration
         integrator_type = 1  # adaptive step
         traj = tbp.prop(list(state_0_i / tc.state_scales[:-1]), [0, tc.ckout_duration_sec / tc.tu], [], 2 * tc.n_dim, 2,
                         0, tc.rtol, tc.atol, 0.1, integrator_type, eom_type, tc.n_dim)
         state_0_i = np.array(traj)[-1, 1:] * tc.state_scales[:-1]
+        times[0] += tc.ckout_duration_sec * c.sec_to_day * c.day_to_jc
 
     return state_0_i, state_f_i, times
 
@@ -210,7 +211,7 @@ def traj_fit_func(y: np.ndarray, yf: np.ndarray, y0: np.ndarray, m_ratio: float,
         # states = np.array([drp, dra, dw, df], dtype=np.float64)
         # penalty = np.array([1, 1, 1, 1], dtype=np.float64)
         states = np.array([dr, dv])
-        penalty = np.array([0, 0])
+        penalty = np.array([10, 10])
         close = True
 
     # Set cost function based on final trajectory type

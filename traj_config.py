@@ -20,7 +20,7 @@ init_body = 'earth'
 target_body = 'mars'
 central_body = 'sun'
 t0_str = '2024 Aug 24 00:00:00'
-ckout_str = '2024 Sep 23 00:00:00'
+ckout_str = '2024 Sep 23 00:00:00'  # end of checkout period
 tf_str = '2025 Nov 07 00:00:00'
 fmt = '%Y %b %d %H:%M:%S'
 ordinal_to_julian = 1721424.5
@@ -108,14 +108,14 @@ isp_chemical = 370  # for the final correction burns
 # Specify the indices of the input array that should be used
 ########################################################################################################################
 if n_dim == 2:
-    input_indices = np.array([0, 1, 2, 3, 8, 9])  # ignore target, 2D [6 nodes]
+    input_indices = np.array([0, 1, 2, 3, 4, 5, 6, 7, 8])  # ignore target, 2D [6 nodes]
     # input_indices = np.array([8, 9])  # mass and time, 2D [2]
 else:
     # input_indices = np.array([0, 1, 3, 4, 6, 7, 9, 10, 12, 13])  # inertial inputs, ignore Z components, 3D [10 nodes]
     # input_indices = np.array([0, 1, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13])  # keplerian inputs, ignore inclination [12 nodes]
     input_indices = np.array([0, 1, 3, 4, 5, 12, 13])  # keplerian inputs, ignore inclination and target, 3D [7]
     # input_indices = np.array([12, 13])  # mass and time, 3D [2]
-input_indices = np.arange(4 * n_dim + 2)  # all
+# input_indices = np.arange(4 * n_dim + 2)  # all
 ########################################################################################################################
 
 
@@ -167,7 +167,7 @@ else:
 
 # Specify output activation type (NOTE: this does not automatically change with the NEAT config file)
 if n_dim == 2:
-    out_node_scales = np.array([[-1, 1], [-1, 1]])
+    out_node_scales = np.array([[-1, 1], [0, 1]])
 else:
     out_node_scales = np.array([[-1, 1], [-1, 1], [-1, 1]])
 
